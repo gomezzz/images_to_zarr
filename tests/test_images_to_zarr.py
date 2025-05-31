@@ -319,7 +319,7 @@ class TestConversion:
         saved_metadata = pd.read_parquet(metadata_parquet)
         assert len(saved_metadata) == len(files)
         assert "filename" in saved_metadata.columns
-        
+
         # Should contain all the filenames
         expected_filenames = {f.name for f in files}
         actual_filenames = set(saved_metadata["filename"])

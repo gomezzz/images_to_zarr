@@ -171,7 +171,6 @@ def convert(
     fits_extension: int | str | Sequence[int | str] | None = None,
     *,
     chunk_shape: tuple[int, int, int] = (1, 256, 256),
-    shard_bytes: int = 16 * 2**20,
     compressor: str = "zstd",
     clevel: int = 4,
     overwrite: bool = False,
@@ -232,7 +231,7 @@ def convert(
 
     # Convert inputs to Path objects
     output_dir = Path(output_dir)
-    
+
     # Find all image files
     image_files = _find_image_files(folders, recursive)
     if not image_files:
@@ -243,17 +242,15 @@ def convert(
         metadata_path = Path(metadata)
         if not metadata_path.exists():
             raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-        
+
         metadata_df = pd.read_csv(metadata_path)
         if "filename" not in metadata_df.columns:
             raise ValueError("Metadata CSV must contain a 'filename' column")
-        
+
         store_name = f"{metadata_path.stem}.zarr"
     else:
         # Create metadata from filenames only
-        metadata_df = pd.DataFrame({
-            'filename': [img_path.name for img_path in image_files]
-        })
+        metadata_df = pd.DataFrame({"filename": [img_path.name for img_path in image_files]})
         store_name = "images.zarr"
     zarr_path = output_dir / store_name
 

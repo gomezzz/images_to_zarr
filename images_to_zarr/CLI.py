@@ -19,7 +19,7 @@ def main() -> None:
     type=click.Path(exists=True),
     required=False,
     help="Optional CSV file with metadata including 'filename' column. "
-         "If not provided, metadata will be created from filenames only.",
+    "If not provided, metadata will be created from filenames only.",
 )
 @click.option(
     "--out",

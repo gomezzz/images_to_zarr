@@ -134,7 +134,7 @@ class TestCLI:
         )
 
         assert result.exit_code == 0, f"CLI failed: {result.output}"
-        
+
         # Check that the store was created with default name
         zarr_store = setup["output_dir"] / "images.zarr"
         assert zarr_store.exists()
