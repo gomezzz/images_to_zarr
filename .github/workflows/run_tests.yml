@@ -58,6 +58,7 @@ jobs:
           set -o pipefail
           micromamba activate i2z
           micromamba install pytest pytest-cov
+          pip install . -e
           pytest --junitxml=pytest.xml --cov-report=xml:coverage.xml --cov-report=term --cov=images_to_zarr tests/ | tee pytest-coverage.txt
           echo "===== Coverage report ====="
           cat pytest-coverage.txt      
