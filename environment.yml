@@ -3,9 +3,16 @@ channels:
   - conda-forge
 dependencies:
   - astropy                  # FITS + WCS
-  - fsspec[s3]               # S3 + other FS back-ends
-  - loguru
-  - imageio>=3               # PNG/JPEG/TIFF reader
+  - black                    # Code formatting
+  - click                    # CLI framework
+  - flake8                   # Linting
+  - imageio>=2.37               # PNG/JPEG/TIFF reader
+  - loguru                   # Structured logging
+  - numpy                    # Array operations
+  - pandas                   # Metadata handling
+  - pillow                      # For pip dependencies
+  - pytest                   # Testing
+  - pytest-cov              # Coverage testing
   - python=3.11
   - tqdm                     # nice progress bars
   - zarr>=3.0.0b0           # v3 spec support
