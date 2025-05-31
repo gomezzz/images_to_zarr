@@ -152,10 +152,12 @@ convert(..., fits_extension=[0, 1, "ERR"])
 | Parameter              | Description                                     | Default       |
 | ---------------------- | ----------------------------------------------- | ------------- |
 | `chunk_shape`          | Zarr chunk dimensions (n_images, height, width) | (1, 256, 256) |
-| `shard_bytes`          | Target shard size in bytes                      | 16 MB         |
-| `compressor`           | Compression codec (zstd, lz4, gzip, etc.)       | "zstd"        |
-| `clevel`               | Compression level (1-9)                         | 4             |
+| `compressor`           | Compression codec (zstd, lz4, gzip, etc.)       | "lz4"         |
+| `clevel`               | Compression level (1-9)                         | 1             |
 | `num_parallel_workers` | Number of processing threads                    | 8             |
+| `recursive`            | Scan subdirectories recursively                 | False         |
+| `fits_extension`       | FITS HDU(s) to read (int, str, or sequence)     | None (uses 0) |
+| `overwrite`            | Overwrite existing store if present             | False         |
 
 ## Output Structure
 
@@ -209,7 +211,7 @@ Total images across all files: 104,857,600
 Total storage size: 126,743.31 MB
 Image dimensions: (3, 256, 256)
 Data type: uint8
-Compression: zstd (level 4)
+Compression: lz4 (level 1)
 
 Format distribution:
   FITS: 60,000,000 (57.2%)
