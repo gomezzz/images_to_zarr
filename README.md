@@ -164,7 +164,7 @@ output_dir/
 ├── metadata.zarr/           # Main Zarr store
 │   ├── images/             # Image data arrays
 │   └── .zarray, .zgroup    # Zarr metadata
-└── metadata_metadata.parquet  # Combined metadata
+└── metadata.parquet  # Combined metadata
 ```
 
 ### Zarr Store Contents
