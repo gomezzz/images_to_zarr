@@ -46,8 +46,11 @@ pip install -e .
 Convert image folders to Zarr:
 
 ```bash
-# Basic conversion
+# Basic conversion with metadata
 images_to_zarr convert /path/to/images --metadata metadata.csv --out /output/dir
+
+# Basic conversion without metadata (filenames only)
+images_to_zarr convert /path/to/images --out /output/dir
 
 # Advanced options
 images_to_zarr convert /path/to/images1 /path/to/images2 \
@@ -74,16 +77,24 @@ images_to_zarr inspect /path/to/store.zarr
 from images_to_zarr import convert, inspect
 from pathlib import Path
 
-# Convert images to Zarr
+# Convert images to Zarr with metadata
 zarr_path = convert(
     folders=["/path/to/images"],
     recursive=True,
-    metadata="/path/to/metadata.csv",
+    metadata="/path/to/metadata.csv",  # Optional
     output_dir="/output/dir",
     num_parallel_workers=8,
     chunk_shape=(1, 256, 256),
     compressor="zstd",
     clevel=4
+)
+
+# Convert images to Zarr without metadata (filenames only)
+zarr_path = convert(
+    folders=["/path/to/images"],
+    recursive=True,
+    metadata=None,  # or simply omit this parameter
+    output_dir="/output/dir"
 )
 
 # Inspect the result
@@ -94,13 +105,23 @@ inspect(zarr_path)
 
 ### Metadata CSV Format
 
-The metadata CSV file must contain at least a `filename` column. Additional columns are preserved:
+The metadata CSV file is **optional**. If provided, it must contain at least a `filename` column. Additional columns are preserved:
 
 ```csv
 filename,source_id,ra,dec,magnitude
 image001.fits,12345,123.456,45.678,18.5
 image002.png,12346,124.567,46.789,19.2
 image003.jpg,12347,125.678,47.890,17.8
+```
+
+If no metadata file is provided, metadata will be automatically created from the filenames:
+
+```bash
+# Convert without metadata - will use filenames only
+images_to_zarr convert /path/to/images --out /output/dir
+
+# Convert with metadata
+images_to_zarr convert /path/to/images --metadata metadata.csv --out /output/dir
 ```
 
 ### Supported Image Formats

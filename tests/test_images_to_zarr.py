@@ -285,6 +285,46 @@ class TestConversion:
                 folders=[temp_dir], recursive=False, metadata=bad_metadata, output_dir=output_dir
             )
 
+    def test_conversion_without_metadata(self, temp_dir, sample_images):
+        """Test conversion with automatically generated metadata from filenames."""
+        images_dir, files = sample_images
+        output_dir = temp_dir / "output"
+
+        zarr_path = convert(
+            folders=[images_dir],
+            recursive=False,
+            metadata=None,  # No metadata provided
+            output_dir=output_dir,
+            num_parallel_workers=2,
+            chunk_shape=(1, 64, 64),
+            overwrite=True,
+        )
+
+        assert zarr_path.exists()
+        assert zarr_path.is_dir()
+        assert zarr_path.name == "images.zarr"  # Default name when no metadata
+
+        # Check Zarr structure
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+
+        assert "images" in root
+        images_array = root["images"]
+        assert images_array.shape[0] == len(files)
+
+        # Check metadata file - should contain only filenames
+        metadata_parquet = zarr_path.parent / f"{zarr_path.stem}_metadata.parquet"
+        assert metadata_parquet.exists()
+
+        saved_metadata = pd.read_parquet(metadata_parquet)
+        assert len(saved_metadata) == len(files)
+        assert "filename" in saved_metadata.columns
+        
+        # Should contain all the filenames
+        expected_filenames = {f.name for f in files}
+        actual_filenames = set(saved_metadata["filename"])
+        assert expected_filenames == actual_filenames
+
 
 class TestInspection:
     """Test the inspection functionality."""

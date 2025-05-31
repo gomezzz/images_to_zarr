@@ -115,6 +115,30 @@ class TestCLI:
 
         assert result.exit_code == 0, f"CLI failed: {result.output}"
 
+    def test_convert_command_without_metadata(self, cli_test_setup):
+        """Test convert CLI command without providing metadata."""
+        setup = cli_test_setup
+        runner = CliRunner()
+
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(setup["images_dir"]),
+                "--out",
+                str(setup["output_dir"]),
+                "--workers",
+                "2",
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+        
+        # Check that the store was created with default name
+        zarr_store = setup["output_dir"] / "images.zarr"
+        assert zarr_store.exists()
+
     def test_inspect_command(self, cli_test_setup):
         """Test the inspect CLI command."""
         setup = cli_test_setup

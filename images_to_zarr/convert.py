@@ -11,7 +11,7 @@ import imageio
 from astropy.io import fits
 from PIL import Image
 
-from . import I2Z_SUPPORTED_EXTS
+from images_to_zarr import I2Z_SUPPORTED_EXTS
 
 
 def _find_image_files(
@@ -164,9 +164,9 @@ def _process_image_batch(
 
 def convert(
     folders: Sequence[Path] | Sequence[str],
-    recursive: bool,
-    metadata: Path | str,
     output_dir: Path | str,
+    metadata: Path | str | None = None,
+    recursive: bool = False,
     num_parallel_workers: int = 8,
     fits_extension: int | str | Sequence[int | str] | None = None,
     *,
@@ -187,9 +187,10 @@ def convert(
     recursive
         If *True*, scan sub-directories too.
     metadata
-        CSV file with at least a ``filename`` column; additional fields
+        Optional CSV file with at least a ``filename`` column; additional fields
         (e.g. ``source_id``, ``ra``, ``dec`` …) are copied verbatim into
         a Parquet side-car and attached as Zarr attributes for easy joins.
+        If not provided, metadata will be created from just the filenames.
     output_dir
         Destination path; a directory called ``<name>.zarr`` is created
         inside it.  Existing stores are refused unless *overwrite* is set.
@@ -231,23 +232,29 @@ def convert(
 
     # Convert inputs to Path objects
     output_dir = Path(output_dir)
-    metadata_path = Path(metadata)
-
+    
     # Find all image files
     image_files = _find_image_files(folders, recursive)
     if not image_files:
         raise ValueError("No image files found in specified folders")
 
-    # Load metadata CSV
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-
-    metadata_df = pd.read_csv(metadata_path)
-    if "filename" not in metadata_df.columns:
-        raise ValueError("Metadata CSV must contain a 'filename' column")
-
-    # Create output directory
-    store_name = f"{metadata_path.stem}.zarr"
+    # Load or create metadata
+    if metadata is not None:
+        metadata_path = Path(metadata)
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+        
+        metadata_df = pd.read_csv(metadata_path)
+        if "filename" not in metadata_df.columns:
+            raise ValueError("Metadata CSV must contain a 'filename' column")
+        
+        store_name = f"{metadata_path.stem}.zarr"
+    else:
+        # Create metadata from filenames only
+        metadata_df = pd.DataFrame({
+            'filename': [img_path.name for img_path in image_files]
+        })
+        store_name = "images.zarr"
     zarr_path = output_dir / store_name
 
     if zarr_path.exists():
