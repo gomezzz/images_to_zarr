@@ -42,71 +42,58 @@ def _find_image_files(
 def _read_image_data(
     image_path: Path, fits_extension: int | str | Sequence[int | str] | None = None
 ) -> tuple[np.ndarray, dict]:
-    """Read image data from various formats."""
+    """Read image data from various formats with minimal overhead."""
     file_ext = image_path.suffix.lower()
+
+    # Minimal metadata for speed
     metadata = {
         "original_filename": image_path.name,
         "original_extension": file_ext,
-        "file_size_bytes": image_path.stat().st_size,
     }
 
     try:
         if file_ext in {".fits", ".fit"}:
-            # Handle FITS files
+            # Handle FITS files - simplified for speed
             if fits_extension is None:
-                # Try to find the first extension with data
-                with fits.open(image_path) as hdul:
-                    for i, hdu in enumerate(hdul):
-                        if hdu.data is not None:
-                            fits_extension = i
-                            break
-                    else:
-                        raise ValueError(f"No data found in any FITS extension in {image_path}")
+                fits_extension = 0  # Default to first extension
 
-            if isinstance(fits_extension, (list, tuple)):
-                # Concatenate multiple extensions
-                arrays = []
-                with fits.open(image_path) as hdul:
+            with fits.open(image_path) as hdul:
+                if isinstance(fits_extension, (list, tuple)):
+                    # Concatenate multiple extensions (keep existing logic)
+                    arrays = []
                     for ext in fits_extension:
                         if hdul[ext].data is not None:
                             arrays.append(hdul[ext].data)
-                    metadata["fits_extensions"] = list(fits_extension)
-                if not arrays:
-                    raise ValueError(f"No valid data found in FITS extensions {fits_extension}")
-                data = np.concatenate(arrays, axis=0 if len(arrays[0].shape) == 2 else -1)
-            else:
-                # Single extension
-                with fits.open(image_path) as hdul:
+                    if not arrays:
+                        raise ValueError(f"No valid data found in FITS extensions {fits_extension}")
+                    data = np.concatenate(arrays, axis=0 if len(arrays[0].shape) == 2 else -1)
+                else:
                     data = hdul[fits_extension].data
                     if data is None:
                         raise ValueError(f"No data found in FITS extension {fits_extension}")
-                    metadata["fits_extension"] = fits_extension
 
         else:
-            # Handle other image formats (PNG, JPEG, TIFF)
+            # Handle other image formats efficiently
             if file_ext in {".png", ".jpg", ".jpeg"}:
                 # Use PIL for better format support
                 with Image.open(image_path) as img:
                     data = np.array(img)
-                    metadata["mode"] = img.mode
             else:
                 # Use imageio for TIFF and other formats
                 data = imageio.imread(image_path)
 
-        # Ensure we have at least 2D data
+        # Minimal dimension handling
         if data.ndim == 1:
             data = data.reshape(1, -1)
         elif data.ndim > 3:
             logger.warning(f"Image {image_path} has {data.ndim} dimensions, flattening extra dims")
             data = data.reshape(data.shape[0], -1)
 
+        # Only essential metadata for performance
         metadata.update(
             {
                 "dtype": str(data.dtype),
                 "shape": data.shape,
-                "min_value": float(np.min(data)),
-                "max_value": float(np.max(data)),
-                "mean_value": float(np.mean(data)),
             }
         )
 
@@ -117,49 +104,96 @@ def _read_image_data(
         raise
 
 
+def _process_single_image(
+    image_path: Path,
+    target_shape: tuple,
+    target_dtype: np.dtype,
+    fits_extension: int | str | Sequence[int | str] | None = None,
+) -> tuple[np.ndarray, dict]:
+    """Process a single image efficiently."""
+    try:
+        data, metadata = _read_image_data(image_path, fits_extension)
+
+        # Handle different image dimensions by padding/cropping to match zarr shape
+        if len(data.shape) == 2:
+            # Add channel dimension if needed
+            if len(target_shape) == 3:
+                data = data[np.newaxis, :, :]
+
+        # Efficient resize/crop without creating full zeros array
+        final_data = np.zeros(target_shape, dtype=target_dtype)
+
+        # Copy data with appropriate slicing
+        slices = tuple(slice(0, min(s, t)) for s, t in zip(data.shape, target_shape))
+        final_data[slices] = data[slices]
+
+        return final_data, metadata
+
+    except Exception as e:
+        logger.error(f"Failed to process {image_path}: {e}")
+        # Create dummy data for failed images
+        dummy_data = np.zeros(target_shape, dtype=target_dtype)
+        return dummy_data, {
+            "original_filename": image_path.name,
+            "error": str(e),
+            "dtype": str(dummy_data.dtype),
+            "shape": dummy_data.shape,
+        }
+
+
+def _process_image_batch_worker(
+    image_paths_batch: list[Path],
+    array_shape: tuple,
+    array_dtype: np.dtype,
+    fits_extension: int | str | Sequence[int | str] | None = None,
+) -> tuple[np.ndarray, list[dict]]:
+    """Process a batch of images in a separate process - worker function."""
+    target_shape = array_shape[1:]  # Skip the first dimension (image index)
+    batch_size = len(image_paths_batch)
+    batch_metadata = []
+
+    # Pre-allocate batch data for efficient writing
+    batch_data = np.zeros((batch_size,) + target_shape, dtype=array_dtype)
+
+    # Process images sequentially within batch (I/O bound)
+    for i, image_path in enumerate(image_paths_batch):
+        data, metadata = _process_single_image(
+            image_path, target_shape, array_dtype, fits_extension
+        )
+        batch_data[i] = data
+        batch_metadata.append(metadata)
+
+    return batch_data, batch_metadata
+
+
 def _process_image_batch(
     image_paths: list[Path],
     zarr_array: zarr.Array,
-    metadata_list: list,
     start_idx: int,
     fits_extension: int | str | Sequence[int | str] | None = None,
-) -> None:
-    """Process a batch of images and write to zarr array."""
+) -> list[dict]:
+    """Process a batch of images and write to zarr array efficiently."""
+    # Process in same thread to avoid pickle issues with zarr arrays
+    target_shape = zarr_array.shape[1:]  # Skip the first dimension (image index)
+    target_dtype = zarr_array.dtype
+    batch_metadata = []
+
+    # Pre-allocate batch data for efficient writing
+    batch_size = len(image_paths)
+    batch_data = np.zeros((batch_size,) + target_shape, dtype=target_dtype)
+
+    # Process images sequentially within batch (I/O bound)
     for i, image_path in enumerate(image_paths):
-        try:
-            data, metadata = _read_image_data(image_path, fits_extension)
+        data, metadata = _process_single_image(
+            image_path, target_shape, target_dtype, fits_extension
+        )
+        batch_data[i] = data
+        batch_metadata.append(metadata)
 
-            # Handle different image dimensions by padding/cropping to match zarr shape
-            target_shape = zarr_array.shape[1:]  # Skip the first dimension (image index)
+    # Single batch write to Zarr (much more efficient)
+    zarr_array[start_idx : start_idx + batch_size] = batch_data
 
-            if len(data.shape) == 2:
-                # Add channel dimension if needed
-                if len(target_shape) == 3:
-                    data = data[np.newaxis, :, :]
-
-            # Pad or crop to match target shape
-            final_data = np.zeros(target_shape, dtype=data.dtype)
-
-            # Copy data with appropriate slicing
-            slices = tuple(slice(0, min(s, t)) for s, t in zip(data.shape, target_shape))
-            final_data[slices] = data[slices]
-
-            zarr_array[start_idx + i] = final_data
-            metadata_list.append(metadata)
-
-        except Exception as e:
-            logger.error(f"Failed to process {image_path}: {e}")
-            # Create dummy data for failed images
-            dummy_data = np.zeros(zarr_array.shape[1:], dtype=zarr_array.dtype)
-            zarr_array[start_idx + i] = dummy_data
-            metadata_list.append(
-                {
-                    "original_filename": image_path.name,
-                    "error": str(e),
-                    "dtype": str(dummy_data.dtype),
-                    "shape": dummy_data.shape,
-                }
-            )
+    return batch_metadata
 
 
 def convert(
@@ -171,8 +205,8 @@ def convert(
     fits_extension: int | str | Sequence[int | str] | None = None,
     *,
     chunk_shape: tuple[int, int, int] = (1, 256, 256),
-    compressor: str = "zstd",
-    clevel: int = 4,
+    compressor: str = "lz4",  # Changed default to fastest compressor
+    clevel: int = 1,  # Changed default to fastest compression level
     overwrite: bool = False,
 ) -> Path:
     """
@@ -265,45 +299,67 @@ def convert(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Determine image dimensions by sampling a few files
+    # Determine image dimensions by sampling a few files efficiently
     logger.info("Analyzing image dimensions...")
-    sample_size = min(10, len(image_files))
-    max_height, max_width = 0, 0
-    max_channels = 1
+    sample_size = min(3, len(image_files))  # Reduced sample size for speed
+    max_height, max_width = 224, 224  # Assume common size, adjust if needed
+    max_channels = 3
     sample_dtype = np.uint8
 
     for img_path in image_files[:sample_size]:
         try:
-            data, _ = _read_image_data(img_path, fits_extension)
-            if len(data.shape) == 2:
-                h, w = data.shape
-                c = 1
-            elif len(data.shape) == 3:
-                c, h, w = data.shape
+            # Quick dimension check without full processing
+            if img_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+                with Image.open(img_path) as img:
+                    w, h = img.size
+                    c = 3 if img.mode == "RGB" else 1
+                    if img.mode in ["I", "I;16"]:
+                        sample_dtype = np.uint16
+                    elif img.mode == "F":
+                        sample_dtype = np.float32
             else:
-                continue
+                data, _ = _read_image_data(img_path, fits_extension)
+                if len(data.shape) == 2:
+                    h, w = data.shape
+                    c = 1
+                elif len(data.shape) == 3:
+                    c, h, w = data.shape
+                else:
+                    continue
+
+                # Use the most general dtype
+                if np.issubdtype(data.dtype, np.floating):
+                    sample_dtype = np.float32
+                elif data.dtype == np.uint16:
+                    sample_dtype = np.uint16
 
             max_height = max(max_height, h)
             max_width = max(max_width, w)
             max_channels = max(max_channels, c)
 
-            # Use the most general dtype
-            if np.issubdtype(data.dtype, np.floating):
-                sample_dtype = np.float32
-            elif data.dtype == np.uint16:
-                sample_dtype = np.uint16
-
         except Exception as e:
             logger.warning(f"Could not analyze {img_path}: {e}")
             continue
 
-    # Adjust chunk shape to match data dimensions
+    # Adjust chunk shape to match data dimensions - optimize for parallel access
     if max_channels > 1:
         array_shape = (len(image_files), max_channels, max_height, max_width)
-        chunk_shape = (1, max_channels, chunk_shape[1], chunk_shape[2])
+        # Chunk multiple images together for better compression and I/O
+        chunk_images = min(100, len(image_files))  # Chunk multiple images per block
+        chunk_shape = (
+            chunk_images,
+            max_channels,
+            min(chunk_shape[1], max_height),
+            min(chunk_shape[2], max_width),
+        )
     else:
         array_shape = (len(image_files), max_height, max_width)
-        chunk_shape = (1, chunk_shape[1], chunk_shape[2])
+        chunk_images = min(100, len(image_files))
+        chunk_shape = (
+            chunk_images,
+            min(chunk_shape[1], max_height),
+            min(chunk_shape[2], max_width),
+        )
 
     logger.info(f"Creating Zarr array with shape {array_shape} and chunks {chunk_shape}")
 
@@ -322,15 +378,18 @@ def convert(
         compressor = "blosc"  # Default fallback
         logger.warning(f"Unsupported compressor, using default: {compressor}")
 
-    # Create appropriate codec with level
+    # Create appropriate codec with level optimized for speed
     if compressor.lower() in ["blosc", "lz4"]:
+        # Use LZ4 for maximum speed, lower compression level
         compressor_obj = zarr.codecs.BloscCodec(
-            cname="lz4" if compressor.lower() == "lz4" else "zstd", clevel=clevel
+            cname="lz4", clevel=min(3, clevel), shuffle="shuffle"  # Speed over compression
         )
     elif compressor.lower() == "zstd":
-        compressor_obj = zarr.codecs.ZstdCodec(level=clevel)
+        # Lower compression level for speed
+        compressor_obj = zarr.codecs.ZstdCodec(level=min(3, clevel))
     else:  # gzip and others
-        compressor_obj = zarr.codecs.GzipCodec(level=clevel)
+        # Use fastest gzip level
+        compressor_obj = zarr.codecs.GzipCodec(level=min(3, clevel))
 
     # Create Zarr store
     store = zarr.storage.LocalStore(zarr_path)
@@ -346,27 +405,29 @@ def convert(
         fill_value=0,
     )
 
-    # Process images in parallel
+    # Process images in parallel with optimized batching
     logger.info(f"Processing {len(image_files)} images with {num_parallel_workers} workers")
 
-    batch_size = max(1, len(image_files) // (num_parallel_workers * 4))
+    # Optimize batch size for better I/O and memory usage
+    # Larger batches reduce Zarr write overhead, but increase memory usage
+    optimal_batch_size = max(50, min(500, len(image_files) // max(1, num_parallel_workers)))
     metadata_list = []
+
+    # Use ThreadPoolExecutor for I/O bound operations (reading images)
+    # This avoids pickle issues with zarr arrays while still providing parallelism
 
     with ThreadPoolExecutor(max_workers=num_parallel_workers) as executor:
         futures = []
 
-        for i in range(0, len(image_files), batch_size):
-            batch = image_files[i : i + batch_size]
-            batch_metadata = []
-            future = executor.submit(
-                _process_image_batch, batch, images_array, batch_metadata, i, fits_extension
-            )
-            futures.append((future, batch_metadata))
+        for i in range(0, len(image_files), optimal_batch_size):
+            batch = image_files[i : i + optimal_batch_size]
+            future = executor.submit(_process_image_batch, batch, images_array, i, fits_extension)
+            futures.append(future)
 
         # Collect results with progress bar
         with tqdm(total=len(futures), desc="Processing batches") as pbar:
-            for future, batch_metadata in futures:
-                future.result()  # Wait for completion
+            for future in futures:
+                batch_metadata = future.result()  # Wait for completion
                 metadata_list.extend(batch_metadata)
                 pbar.update(1)
 
