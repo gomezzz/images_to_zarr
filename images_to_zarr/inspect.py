@@ -88,7 +88,7 @@ def inspect(store: Path | str) -> None:
         print(f"Data type: {images_array.dtype}")
 
         if "compressor" in attrs:
-            compression_level = attrs.get('compression_level', 'unknown')
+            compression_level = attrs.get("compression_level", "unknown")
             print(f"Compression: {attrs['compressor']} (level {compression_level})")
 
         if "chunk_shape" in attrs:
@@ -176,7 +176,7 @@ def inspect(store: Path | str) -> None:
                     print(f"  Overall range: {overall_min:.3f} – {overall_max:.3f}")
 
                     if "mean_value" in metadata_df.columns:
-                        mean_pixel_value = metadata_df['mean_value'].mean()
+                        mean_pixel_value = metadata_df["mean_value"].mean()
                         print(f"  Mean pixel value across all images: {mean_pixel_value:.3f}")
 
             except Exception as e:

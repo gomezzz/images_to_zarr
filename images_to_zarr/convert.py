@@ -194,7 +194,7 @@ def _process_image_batch(
         batch_metadata.append(metadata)
 
     # Single batch write to Zarr (much more efficient)
-    zarr_array[start_idx:start_idx + batch_size] = batch_data
+    zarr_array[start_idx : start_idx + batch_size] = batch_data
 
     return batch_metadata
 
@@ -423,7 +423,7 @@ def convert(
         futures = []
 
         for i in range(0, len(image_files), optimal_batch_size):
-            batch = image_files[i:i + optimal_batch_size]
+            batch = image_files[i : i + optimal_batch_size]
             future = executor.submit(_process_image_batch, batch, images_array, i, fits_extension)
             futures.append(future)
 
@@ -470,9 +470,7 @@ def convert(
     )
 
     logger.info(f"Successfully created Zarr store: {zarr_path}")
-    total_size_mb = (
-        sum(f.stat().st_size for f in zarr_path.rglob('*') if f.is_file()) / 1024**2
-    )
+    total_size_mb = sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file()) / 1024**2
     logger.info(f"Total size: {total_size_mb:.2f} MB")
 
     return zarr_path
