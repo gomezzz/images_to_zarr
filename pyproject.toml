@@ -1,0 +1,6 @@
+[project]
+name = "images_to_zarr"
+version = "0.1.0"
+
+[project.scripts]
+images_to_zarr = "images_to_zarr.cli:main"

@@ -1,0 +1,11 @@
+name: img2zarr
+channels:
+  - conda-forge
+dependencies:
+  - astropy                  # FITS + WCS
+  - fsspec[s3]               # S3 + other FS back-ends
+  - loguru
+  - imageio>=3               # PNG/JPEG/TIFF reader
+  - python=3.11
+  - tqdm                     # nice progress bars
+  - zarr>=3.0.0b0           # v3 spec support
