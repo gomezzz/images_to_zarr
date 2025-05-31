@@ -194,3 +194,4 @@ cython_debug/
 .cursorindexingignore
 
 test_notebook.ipynb
+tmp
