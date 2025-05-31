@@ -1,4 +1,5 @@
 from pathlib import Path
+import ast
 import zarr
 import pandas as pd
 from loguru import logger
@@ -87,9 +88,8 @@ def inspect(store: Path | str) -> None:
         print(f"Data type: {images_array.dtype}")
 
         if "compressor" in attrs:
-            print(
-                f"Compression: {attrs['compressor']} (level {attrs.get('compression_level', 'unknown')})"
-            )
+            compression_level = attrs.get('compression_level', 'unknown')
+            print(f"Compression: {attrs['compressor']} (level {compression_level})")
 
         if "chunk_shape" in attrs:
             print(f"Chunk shape: {attrs['chunk_shape']}")
@@ -133,7 +133,7 @@ def inspect(store: Path | str) -> None:
                 # Data type distribution
                 if "dtype" in metadata_df.columns:
                     dtype_counts = metadata_df["dtype"].value_counts()
-                    print(f"\nOriginal data type distribution:")
+                    print("\nOriginal data type distribution:")
                     for dtype, count in dtype_counts.items():
                         percentage = (count / total_images) * 100
                         print(f"  {dtype}: {percentage:.1f}%")
@@ -146,16 +146,16 @@ def inspect(store: Path | str) -> None:
                         try:
                             # Handle string representation of tuples
                             if isinstance(shape_str, str):
-                                shape = eval(shape_str)
+                                shape = ast.literal_eval(shape_str)
                             else:
                                 shape = shape_str
                             shapes.append(shape)
-                        except:
+                        except Exception:
                             continue
 
                     if shapes:
                         shape_counter = Counter(shapes)
-                        print(f"\nImage shape distribution (top 5):")
+                        print("\nImage shape distribution (top 5):")
                         for shape, count in shape_counter.most_common(5):
                             percentage = (count / len(shapes)) * 100
                             print(f"  {shape}: {count:,} ({percentage:.1f}%)")
@@ -163,28 +163,27 @@ def inspect(store: Path | str) -> None:
                 # File size statistics
                 if "file_size_bytes" in metadata_df.columns:
                     file_sizes_mb = metadata_df["file_size_bytes"] / (1024**2)
-                    print(f"\nOriginal file size statistics:")
+                    print("\nOriginal file size statistics:")
                     print(f"  Mean: {file_sizes_mb.mean():.2f} MB")
                     print(f"  Median: {file_sizes_mb.median():.2f} MB")
                     print(f"  Range: {file_sizes_mb.min():.2f} – {file_sizes_mb.max():.2f} MB")
 
                 # Dynamic range analysis
                 if all(col in metadata_df.columns for col in ["min_value", "max_value"]):
-                    print(f"\nDynamic range analysis:")
+                    print("\nDynamic range analysis:")
                     overall_min = metadata_df["min_value"].min()
                     overall_max = metadata_df["max_value"].max()
                     print(f"  Overall range: {overall_min:.3f} – {overall_max:.3f}")
 
                     if "mean_value" in metadata_df.columns:
-                        print(
-                            f"  Mean pixel value across all images: {metadata_df['mean_value'].mean():.3f}"
-                        )
+                        mean_pixel_value = metadata_df['mean_value'].mean()
+                        print(f"  Mean pixel value across all images: {mean_pixel_value:.3f}")
 
             except Exception as e:
                 logger.warning(f"Could not load metadata: {e}")
 
         # Additional store information
-        print(f"\nStore information:")
+        print("\nStore information:")
         print(f"  Store path: {store_path}")
         print(f"  Store format: Zarr v{zarr.__version__}")
 

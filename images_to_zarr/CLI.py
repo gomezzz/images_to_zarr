@@ -33,9 +33,8 @@ def main() -> None:
     "--fits-ext", "fits_extension", default=None, help="FITS extension to read (number or name)"
 )
 @click.option("--chunk-shape", default="1,256,256", help="Chunk shape as comma-separated values")
-@click.option("--shard-bytes", default=16777216, help="Target shard size in bytes")
-@click.option("--compressor", default="zstd", help="Compression codec")
-@click.option("--clevel", default=4, help="Compression level")
+@click.option("--compressor", default="lz4", help="Compression codec")
+@click.option("--clevel", default=1, help="Compression level")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing store")
 def convert(**kw):
     """Convert image folders to Zarr format."""

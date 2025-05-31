@@ -1,3 +1,6 @@
+import sys
+from loguru import logger
+
 # Supported file extensions for images to Zarr conversion
 I2Z_SUPPORTED_EXTS = {".fits", ".fit", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
@@ -5,8 +8,6 @@ I2Z_SUPPORTED_EXTS = {".fits", ".fit", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 __version__ = "0.1.0"
 
 # Logging configuration
-import sys
-from loguru import logger
 
 
 # Configure logger with option to disable for releases
@@ -41,10 +42,11 @@ def configure_logging(enable: bool = True, level: str = "INFO"):
 # Initialize with default settings
 configure_logging(enable=True)
 
-from .convert import convert
-from .inspect import inspect
+# Import after setting up constants to avoid circular imports
+from .convert import convert  # noqa: E402
+from .inspect import inspect  # noqa: E402
 
-all = [
+__all__ = [
     "convert",
     "inspect",
     "__version__",
