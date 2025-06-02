@@ -241,8 +241,6 @@ def convert(
     chunk_shape
         Chunk layout **(n_images, height, width)** ; the first dimension
         **must be 1** so each image maps to exactly one chunk.
-    shard_bytes
-        Target size (bytes) of each shard container file.
     compressor
         Any *numcodecs* codec name (``"zstd"``, ``"lz4"``, …).
     clevel
