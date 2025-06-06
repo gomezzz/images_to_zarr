@@ -715,7 +715,7 @@ class TestFoldersInputNormalization:
 class TestDirectImageConversion:
     """Test converting images directly from memory."""
 
-    def test_convert_from_memory_nchw(self, temp_dir):
+    def test_convert_nchw(self, temp_dir):
         """Test converting images directly from memory in NCHW format."""
         # Create sample images in NCHW format
         batch_size = 5
@@ -748,20 +748,27 @@ class TestDirectImageConversion:
         assert images_array.shape == images.shape
         assert np.array_equal(images_array[:], images)
 
-    def test_convert_from_memory_with_convenience_function(self, temp_dir):
-        """Test the convenience function convert_from_memory."""
-        from images_to_zarr.convert import convert_from_memory
+    def test_convert_with_convenience_function(self, temp_dir):
+        """Test the convenience function convert."""
 
         # Create sample images
         images = np.random.random((3, 2, 32, 32)).astype(np.float32)
 
-        zarr_path = convert_from_memory(
+        zarr_path = convert(
             images=images,
             output_dir=temp_dir,
             overwrite=True,
         )
 
         assert zarr_path.exists()
+
+        # Check that the path structure is correct
+        assert zarr_path.name == "images.zarr"
+        assert zarr_path.parent == temp_dir
+
+        # Check that there's no nested images.zarr/images.zarr
+        nested_zarr = zarr_path / "images.zarr"
+        assert not nested_zarr.exists(), f"Found nested zarr structure: {nested_zarr}"
 
         store = zarr.storage.LocalStore(zarr_path)
         root = zarr.open_group(store=store, mode="r")
@@ -796,6 +803,55 @@ class TestDirectImageConversion:
                 images=None,
                 overwrite=True,
             )
+
+
+class TestPathStructure:
+    """Test that zarr paths are created correctly for both folder and memory conversion."""
+
+    def test_path_structure_correctness(self, temp_dir, sample_images):
+        """Test that zarr paths are created correctly for both folder and memory conversion."""
+        # Test folder-based conversion
+        images_dir, files = sample_images
+        from images_to_zarr.convert import convert
+
+        zarr_path_folder = convert(
+            folders=[images_dir],
+            output_dir=temp_dir,
+            overwrite=True,
+        )
+
+        assert zarr_path_folder.exists()
+        assert zarr_path_folder.name == "images.zarr"
+        assert zarr_path_folder.parent == temp_dir
+
+        # Check that there's no nested zarr structure
+        nested_zarr_folder = zarr_path_folder / "images.zarr"
+        assert (
+            not nested_zarr_folder.exists()
+        ), f"Found nested zarr in folder conversion: {nested_zarr_folder}"
+
+        # Clean up
+        import shutil
+
+        shutil.rmtree(zarr_path_folder)
+
+        images = np.random.random((2, 3, 32, 32)).astype(np.float32)
+
+        zarr_path_memory = convert(
+            images=images,
+            output_dir=temp_dir,
+            overwrite=True,
+        )
+
+        assert zarr_path_memory.exists()
+        assert zarr_path_memory.name == "images.zarr"
+        assert zarr_path_memory.parent == temp_dir
+
+        # Check that there's no nested zarr structure
+        nested_zarr_memory = zarr_path_memory / "images.zarr"
+        assert (
+            not nested_zarr_memory.exists()
+        ), f"Found nested zarr in memory conversion: {nested_zarr_memory}"
 
 
 if __name__ == "__main__":

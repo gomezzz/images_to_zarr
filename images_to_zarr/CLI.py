@@ -12,8 +12,10 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("output_dir", type=click.Path(), required=True)
 @click.argument("folders", type=click.Path(exists=True), nargs=-1, required=False)
+@click.option(
+    "--out", "output_dir", type=click.Path(), required=True, help="Output directory for Zarr store"
+)
 @click.option("--recursive", is_flag=True, help="Scan subdirectories recursively")
 @click.option(
     "--metadata",
@@ -54,7 +56,12 @@ def convert(**kw):
     else:
         kw["folders"] = None
 
-    _convert(**kw)
+    # Call convert with proper parameter order
+    result = _convert(**kw)
+    if result:
+        click.echo(f"Successfully created Zarr store: {result}")
+    else:
+        click.echo("Conversion completed")
 
 
 @main.command()
