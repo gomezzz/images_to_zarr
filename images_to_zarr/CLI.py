@@ -46,14 +46,14 @@ def convert(**kw):
         kw["fits_extension"] = fits_ext
 
     kw["chunk_shape"] = chunk_shape
-    
+
     # Convert folders to list if provided
     folders = kw.pop("folders", ())
     if folders:
         kw["folders"] = list(folders)
     else:
         kw["folders"] = None
-    
+
     _convert(**kw)
 
 
