@@ -12,7 +12,8 @@ def main() -> None:
 
 
 @main.command()
-@click.argument("folders", type=click.Path(exists=True), nargs=-1, required=True)
+@click.argument("output_dir", type=click.Path(), required=True)
+@click.argument("folders", type=click.Path(exists=True), nargs=-1, required=False)
 @click.option("--recursive", is_flag=True, help="Scan subdirectories recursively")
 @click.option(
     "--metadata",
@@ -20,13 +21,6 @@ def main() -> None:
     required=False,
     help="Optional CSV file with metadata including 'filename' column. "
     "If not provided, metadata will be created from filenames only.",
-)
-@click.option(
-    "--out",
-    "output_dir",
-    type=click.Path(),
-    required=True,
-    help="Output directory for the Zarr store",
 )
 @click.option("--workers", "num_parallel_workers", default=8, help="Number of parallel workers")
 @click.option(
@@ -52,6 +46,14 @@ def convert(**kw):
         kw["fits_extension"] = fits_ext
 
     kw["chunk_shape"] = chunk_shape
+    
+    # Convert folders to list if provided
+    folders = kw.pop("folders", ())
+    if folders:
+        kw["folders"] = list(folders)
+    else:
+        kw["folders"] = None
+    
     _convert(**kw)
 
 

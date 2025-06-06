@@ -553,5 +553,250 @@ class TestMetadata:
         assert creation_info["recursive_scan"] is False
 
 
+class TestNCHWFormat:
+    """Test that all images are converted to NCHW format correctly."""
+
+    def test_grayscale_to_nchw(self, temp_dir):
+        """Test grayscale image conversion to NCHW format."""
+        from images_to_zarr.convert import _ensure_nchw_format
+
+        # Create a simple grayscale image (H, W)
+        grayscale_data = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
+
+        # Test _ensure_nchw_format directly
+        nchw_data = _ensure_nchw_format(grayscale_data)
+
+        # Should be (1, 1, 64, 64) - batch=1, channels=1, height=64, width=64
+        assert nchw_data.shape == (1, 1, 64, 64)
+        assert np.array_equal(nchw_data[0, 0, :, :], grayscale_data)
+
+    def test_rgb_hwc_to_nchw(self, temp_dir):
+        """Test RGB image in HWC format conversion to NCHW."""
+        from images_to_zarr.convert import _ensure_nchw_format
+
+        # Create RGB image in HWC format (Height, Width, Channels)
+        rgb_hwc = np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
+
+        nchw_data = _ensure_nchw_format(rgb_hwc)
+
+        # Should be (1, 3, 64, 64) - batch=1, channels=3, height=64, width=64
+        assert nchw_data.shape == (1, 3, 64, 64)
+
+        # Check that data is correctly transposed
+        for c in range(3):
+            assert np.array_equal(nchw_data[0, c, :, :], rgb_hwc[:, :, c])
+
+    def test_fits_chw_to_nchw(self, temp_dir):
+        """Test FITS image in CHW format conversion to NCHW."""
+        from images_to_zarr.convert import _ensure_nchw_format
+
+        # Create FITS-style image in CHW format (Channels, Height, Width)
+        fits_chw = np.random.random((2, 64, 64)).astype(np.float32)
+
+        nchw_data = _ensure_nchw_format(fits_chw)
+
+        # Should be (1, 2, 64, 64) - batch=1, channels=2, height=64, width=64
+        assert nchw_data.shape == (1, 2, 64, 64)
+        assert np.array_equal(nchw_data[0, :, :, :], fits_chw)
+
+    def test_different_formats_produce_nchw(self, sample_images):
+        """Test that different image formats all produce NCHW output."""
+        from images_to_zarr.convert import _read_image_data, _ensure_nchw_format
+
+        images_dir, files = sample_images
+
+        for file_path in files:
+            # Read raw data and convert to NCHW
+            raw_data, metadata = _read_image_data(file_path)
+            data = _ensure_nchw_format(raw_data)
+
+            # All images should be in NCHW format (4D)
+            assert data.ndim == 4, f"Image {file_path.name} is not 4D: {data.shape}"
+            assert data.shape[0] == 1, f"Batch dimension should be 1: {data.shape}"
+
+            # Check that channels, height, width are positive
+            _, c, h, w = data.shape
+            assert c > 0, f"Channels dimension invalid: {c}"
+            assert h > 0, f"Height dimension invalid: {h}"
+            assert w > 0, f"Width dimension invalid: {w}"
+
+    def test_zarr_store_has_nchw_format(self, temp_dir, sample_images, sample_metadata):
+        """Test that the final Zarr store contains data in NCHW format."""
+        images_dir, files = sample_images
+        metadata_path, metadata_df = sample_metadata
+
+        # Convert to Zarr
+        zarr_path = convert(
+            output_dir=temp_dir,
+            folders=[images_dir],
+            metadata=metadata_path,
+            chunk_shape=(1, 128, 128),
+            overwrite=True,
+        )
+
+        # Open the Zarr store and check format
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        # Should be 4D: (N, C, H, W)
+        assert images_array.ndim == 4, f"Zarr array is not 4D: {images_array.shape}"
+
+        # Check that we have the expected number of images
+        assert images_array.shape[0] == len(files)
+
+        # Check that all dimensions are positive
+        n, c, h, w = images_array.shape
+        assert c > 0 and h > 0 and w > 0
+
+
+class TestFoldersInputNormalization:
+    """Test that single string folders input is converted to list."""
+
+    def test_single_string_folder(self, temp_dir, sample_images):
+        """Test that a single string folder is converted to a list."""
+        images_dir, files = sample_images
+
+        # Test with single string
+        zarr_path = convert(
+            output_dir=temp_dir,
+            folders=str(images_dir),  # Single string, not list
+            overwrite=True,
+        )
+
+        # Should work and create a zarr store
+        assert zarr_path.exists()
+        assert zarr_path.is_dir()
+
+    def test_single_path_folder(self, temp_dir, sample_images):
+        """Test that a single Path folder is converted to a list."""
+        images_dir, files = sample_images
+
+        # Test with single Path object
+        zarr_path = convert(
+            output_dir=temp_dir,
+            folders=images_dir,  # Single Path, not list
+            overwrite=True,
+        )
+
+        # Should work and create a zarr store
+        assert zarr_path.exists()
+        assert zarr_path.is_dir()
+
+    def test_list_of_folders(self, temp_dir, sample_images):
+        """Test that a list of folders works correctly."""
+        images_dir, files = sample_images
+
+        # Create another folder with one image
+        images_dir2 = temp_dir / "images2"
+        images_dir2.mkdir()
+        sample_data = np.random.randint(0, 255, (32, 32), dtype=np.uint8)
+        Image.fromarray(sample_data, mode="L").save(images_dir2 / "extra.png")
+
+        # Test with list of folders
+        zarr_path = convert(
+            output_dir=temp_dir,
+            folders=[images_dir, images_dir2],  # List of folders
+            overwrite=True,
+        )
+
+        # Should work and create a zarr store with images from both folders
+        assert zarr_path.exists()
+        assert zarr_path.is_dir()
+
+        # Check that we have images from both folders
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        assert images_array.shape[0] == len(files) + 1  # Original files + 1 extra
+
+
+class TestDirectImageConversion:
+    """Test converting images directly from memory."""
+
+    def test_convert_from_memory_nchw(self, temp_dir):
+        """Test converting images directly from memory in NCHW format."""
+        # Create sample images in NCHW format
+        batch_size = 5
+        channels = 3
+        height = 64
+        width = 64
+
+        images = np.random.randint(0, 255, (batch_size, channels, height, width), dtype=np.uint8)
+
+        # Create metadata
+        metadata = [{"filename": f"memory_image_{i}.unknown", "id": i} for i in range(batch_size)]
+
+        # Convert from memory
+        zarr_path = convert(
+            output_dir=temp_dir,
+            images=images,
+            image_metadata=metadata,
+            overwrite=True,
+        )
+
+        # Check the result
+        assert zarr_path.exists()
+        assert zarr_path.is_dir()
+
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        # Should have the same shape and data
+        assert images_array.shape == images.shape
+        assert np.array_equal(images_array[:], images)
+
+    def test_convert_from_memory_with_convenience_function(self, temp_dir):
+        """Test the convenience function convert_from_memory."""
+        from images_to_zarr.convert import convert_from_memory
+
+        # Create sample images
+        images = np.random.random((3, 2, 32, 32)).astype(np.float32)
+
+        zarr_path = convert_from_memory(
+            images=images,
+            output_dir=temp_dir,
+            overwrite=True,
+        )
+
+        assert zarr_path.exists()
+
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        assert np.allclose(images_array[:], images)
+
+    def test_invalid_direct_image_input(self, temp_dir):
+        """Test that invalid direct image input raises appropriate errors."""
+        # Test with wrong number of dimensions
+        with pytest.raises(ValueError, match="Direct image input must be 4D"):
+            convert(
+                output_dir=temp_dir,
+                images=np.random.random((64, 64)),  # 2D instead of 4D
+                overwrite=True,
+            )
+
+        # Test with wrong number of dimensions
+        with pytest.raises(ValueError, match="Direct image input must be 4D"):
+            convert(
+                output_dir=temp_dir,
+                images=np.random.random((5, 64, 64)),  # 3D instead of 4D
+                overwrite=True,
+            )
+
+    def test_no_folders_and_no_images_error(self, temp_dir):
+        """Test that providing neither folders nor images raises an error."""
+        with pytest.raises(ValueError, match="Must provide either folders or images"):
+            convert(
+                output_dir=temp_dir,
+                folders=None,
+                images=None,
+                overwrite=True,
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
