@@ -9,10 +9,13 @@ A Python module to efficiently bulk-convert large collections of heterogeneous i
 ## Features
 
 - **Multi-format support**: FITS, PNG, JPEG, TIFF images
+- **Consistent NCHW format**: All images stored in (batch, channels, height, width) format for ML workflows
+- **Direct memory conversion**: Convert numpy arrays directly to Zarr without intermediate files
 - **Efficient storage**: Sharded Zarr v3 format with configurable compression
 - **Metadata preservation**: Combines image data with tabular metadata
 - **Parallel processing**: Multi-threaded conversion for large datasets
 - **Cloud-friendly**: S3-compatible storage backend
+- **Visual inspection**: Built-in plotting tools to sample and display stored images
 - **Easy inspection**: Built-in tools to analyze converted stores
 
 ## Installation
@@ -74,7 +77,9 @@ images_to_zarr inspect /path/to/store.zarr
 ### Python API
 
 ```python
-from images_to_zarr import convert, inspect
+from images_to_zarr import convert, inspect, display_sample_images
+from images_to_zarr.convert import convert_from_memory
+import numpy as np
 from pathlib import Path
 
 # Convert images to Zarr with metadata
@@ -97,8 +102,34 @@ zarr_path = convert(
     output_dir="/output/dir"
 )
 
+# Convert numpy arrays directly to Zarr (memory-to-zarr conversion)
+# Images must be in NCHW format: (batch, channels, height, width)
+images = np.random.rand(100, 3, 224, 224).astype(np.float32)  # 100 RGB images
+zarr_path = convert_from_memory(
+    images=images,
+    output_dir="/output/dir",
+    compressor="lz4",
+    overwrite=True
+)
+
+# Convert with custom metadata for memory conversion
+metadata = [{"id": i, "source": "generated"} for i in range(100)]
+zarr_path = convert(
+    output_dir="/output/dir",
+    images=images,
+    image_metadata=metadata,
+    chunk_shape=(10, 224, 224),  # Chunk 10 images together
+    overwrite=True
+)
+
 # Inspect the result
 inspect(zarr_path)
+
+# Display random sample images from the store
+display_sample_images(zarr_path, num_samples=6, figsize=(15, 10))
+
+# Save sample images to file
+display_sample_images(zarr_path, num_samples=4, save_path="samples.png")
 ```
 
 ## Usage
@@ -283,3 +314,40 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built on [Zarr](https://zarr.readthedocs.io/) for array storage
 - Uses [Astropy](https://www.astropy.org/) for FITS support
 - Inspired by the needs of astronomical data processing pipelines
+
+### Channel Order and Format Consistency
+
+All images are automatically converted to **NCHW format** (batch, channels, height, width) for consistency across different input formats:
+
+- **2D grayscale**: `(H, W)` → `(1, 1, H, W)`
+- **3D RGB (HWC)**: `(H, W, C)` → `(1, C, H, W)` 
+- **3D CHW**: `(C, H, W)` → `(1, C, H, W)`
+- **4D batched**: Already in NCHW format
+
+The library intelligently detects the input format:
+- Images with ≤4 channels in the last dimension are treated as HWC (Height-Width-Channels)
+- Images with >4 channels in the last dimension are treated as CHW (Channels-Height-Width)
+- FITS files and other scientific formats are handled appropriately
+
+This ensures consistent tensor shapes for machine learning workflows while preserving the original data.
+
+### Direct Memory Conversion
+
+Convert numpy arrays directly to Zarr without saving intermediate files:
+
+```python
+import numpy as np
+from images_to_zarr.convert import convert_from_memory
+
+# Your image data (must be 4D NCHW format)
+images = np.random.rand(1000, 3, 256, 256).astype(np.float32)
+
+# Convert directly to zarr
+zarr_path = convert_from_memory(
+    images=images,
+    output_dir="./data",
+    compressor="lz4",
+    chunk_shape=(100, 256, 256),  # Chunk 100 images together
+    overwrite=True
+)
+```

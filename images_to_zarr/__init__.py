@@ -44,10 +44,11 @@ configure_logging(enable=True)
 
 # Import after setting up constants to avoid circular imports
 from .convert import convert  # noqa: E402
-from .inspect import inspect  # noqa: E402
+from .inspect import inspect, display_sample_images  # noqa: E402
 
 __all__ = [
     "convert",
+    "display_sample_images",
     "inspect",
     "__version__",
 ]
