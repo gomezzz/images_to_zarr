@@ -203,13 +203,8 @@ def _process_single_image(
         # Convert to NCHW format
         data = _ensure_nchw_format(data)
 
-        # Handle different image dimensions by padding/cropping to match zarr shape
-        if len(data.shape) == 4 and len(target_shape) == 3:
-            # Remove batch dimension for storage if target is 3D
-            data = data[0]
-        elif len(data.shape) == 4 and len(target_shape) == 4:
-            # Keep 4D shape - already in NCHW
-            pass
+        # Sqeueeze if single channel, single image
+        data = data.squeeze()
 
         # Apply resizing if requested
         if resize is not None:
