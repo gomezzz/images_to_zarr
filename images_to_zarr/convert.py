@@ -469,21 +469,18 @@ def convert(
         metadata_df = pd.DataFrame(image_metadata)
 
     else:
-        # File-based conversion - sample files to determine dimensions
-        sample_size = min(3, len(image_files))  # Reduced sample size for speed
+        # File-based conversion - determine dimensions
+        num_images = len(image_files)
 
-        # Use resize dimensions if provided, otherwise determine from samples
-        if resize is not None:
-            max_height, max_width = resize
-        else:
-            max_height, max_width = 224, 224  # Default, will be updated from samples
-
-        max_channels = 3
+        # Sample files to determine dimensions, channels, and dtype
+        sample_size = min(3, len(image_files))
+        max_channels = 1
         sample_dtype = np.uint8
+        detected_height, detected_width = None, None
 
+        # Analyze sample images to determine properties
         for img_path in image_files[:sample_size]:
             try:
-                # Quick dimension check without full processing
                 if img_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
                     with Image.open(img_path) as img:
                         w, h = img.size
@@ -494,11 +491,9 @@ def convert(
                             sample_dtype = np.float32
                 else:
                     data, _ = _read_image_data(img_path, fits_extension)
-                    # Convert to NCHW to get consistent dimensions
                     data_nchw = _ensure_nchw_format(data)
 
                     if len(data_nchw.shape) == 4:
-                        # NCHW format: (1, C, H, W)
                         _, c, h, w = data_nchw.shape
                     elif len(data.shape) == 2:
                         h, w = data.shape
@@ -508,63 +503,91 @@ def convert(
                             h, w, c = data.shape
                         else:  # CHW format
                             c, h, w = data.shape
-                    else:
-                        continue
 
-                    # Use the most general dtype
                     if np.issubdtype(data.dtype, np.floating):
                         sample_dtype = np.float32
                     elif data.dtype == np.uint16:
                         sample_dtype = np.uint16
 
-                # Only update max dimensions if not using resize
-                if resize is None:
-                    max_height = max(max_height, h)
-                    max_width = max(max_width, w)
+                # Track max channels across all images
                 max_channels = max(max_channels, c)
+                # Track dimensions for validation (if no resize)
+                if detected_height is None:
+                    detected_height, detected_width = h, w
+                elif (h, w) != (detected_height, detected_width) and resize is None:
+                    raise ValueError(
+                        f"Image {img_path.name} has dimensions {h}x{w} but expected "
+                        f"{detected_height}x{detected_width}. All images must have the same dimensions "
+                        "or use the 'resize' parameter to automatically resize them."
+                    )
 
+            except ValueError as ve:
+                # Re-raise ValueError (dimension mismatch) immediately
+                if "All images must have the same dimensions" in str(ve):
+                    raise ve
+                else:
+                    logger.warning(f"Could not analyze {img_path}: {ve}")
+                    continue
             except Exception as e:
                 logger.warning(f"Could not analyze {img_path}: {e}")
                 continue
 
-        num_images = len(image_files)
+        # Determine final dimensions
+        if resize is not None:
+            # User specified resize - use those dimensions
+            max_height, max_width = resize
+            logger.info(f"Using resize dimensions: {max_height}x{max_width}")
+        else:
+            # No resize - use detected dimensions (all must match)
+            if detected_height is None or detected_width is None:
+                raise ValueError("Could not determine image dimensions from sample files")
+            max_height, max_width = detected_height, detected_width
+            logger.info(f"Using detected dimensions: {max_height}x{max_width}")
 
-    # Determine array shape based on channels
-    if max_channels > 1:
+        # Validate that we have valid dimensions
+        if max_height is None or max_width is None:
+            raise ValueError(
+                "Could not determine image dimensions"
+            )  # Determine array shape based on channels
+    if images is not None:
+        # For memory conversion, always preserve the input shape (always 4D)
+        array_shape = images.shape
+    elif max_channels > 1:
         array_shape = (num_images, max_channels, max_height, max_width)
     else:
         array_shape = (num_images, max_height, max_width)
 
-    # Use user-provided chunk_shape if valid, otherwise create smart defaults
-    if len(chunk_shape) == 3 and len(array_shape) == 4:
-        # User provided 3D chunk shape but we need 4D - adjust
+    # Handle chunk_shape: respect user input or create smart defaults
+    if len(chunk_shape) == len(array_shape):
+        # User chunk shape matches array dimensions - use it (clamp to array size)
+        final_chunk_shape = tuple(min(c, s) for c, s in zip(chunk_shape, array_shape))
+        logger.info(f"Using user-specified chunk shape: {final_chunk_shape}")
+    elif len(chunk_shape) == 3 and len(array_shape) == 4:
+        # User provided 3D chunk shape but we have 4D array - expand to include channels
         final_chunk_shape = (
-            chunk_shape[0],  # User-specified batch size
+            min(chunk_shape[0], num_images),
             max_channels,
             min(chunk_shape[1], max_height),
             min(chunk_shape[2], max_width),
         )
-    elif len(chunk_shape) == len(array_shape):
-        # User chunk shape matches array dimensions
-        final_chunk_shape = tuple(min(c, s) for c, s in zip(chunk_shape, array_shape))
+        logger.info(f"Expanded 3D chunk shape to 4D: {final_chunk_shape}")
     else:
-        # Create smart defaults when user chunk_shape doesn't match
+        # Create smart defaults
+        default_chunk_size = min(10, num_images)  # Reasonable default
         if max_channels > 1:
-            # Chunk multiple images together for better compression and I/O
-            chunk_images = min(100, num_images)  # Chunk multiple images per block
             final_chunk_shape = (
-                chunk_images,
+                default_chunk_size,
                 max_channels,
                 min(256, max_height),
                 min(256, max_width),
             )
         else:
-            chunk_images = min(100, num_images)
             final_chunk_shape = (
-                chunk_images,
+                default_chunk_size,
                 min(256, max_height),
                 min(256, max_width),
             )
+        logger.info(f"Using default chunk shape: {final_chunk_shape}")
 
     chunk_shape = final_chunk_shape
 

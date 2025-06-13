@@ -57,19 +57,16 @@ def convert(**kw):
             fits_ext = int(fits_ext)
         except ValueError:
             pass  # Keep as string
-        kw["fits_extension"] = fits_ext
-
-    # Handle resize parameter
+        kw["fits_extension"] = fits_ext  # Handle resize parameter
     resize_str = kw.pop("resize", None)
     if resize_str is not None:
         try:
             height, width = map(int, resize_str.split(","))
             kw["resize"] = (height, width)
         except ValueError:
-            click.echo(
-                f"Error: Invalid resize format '{resize_str}'. Use 'height,width' (e.g., '512,512')"
+            raise click.ClickException(
+                f"Invalid resize format '{resize_str}'. Use 'height,width' (e.g., '512,512')"
             )
-            return
     else:
         kw["resize"] = None
 
