@@ -1,6 +1,5 @@
 """Comprehensive integration tests for all features."""
 
-import pytest
 import numpy as np
 import pandas as pd
 import zarr

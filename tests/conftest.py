@@ -8,10 +8,6 @@ import tempfile
 import shutil
 from PIL import Image
 from astropy.io import fits
-import zarr
-import imageio
-
-from images_to_zarr import I2Z_SUPPORTED_EXTS
 
 # Add the project root to the Python path
 project_root = Path(__file__).parent.parent

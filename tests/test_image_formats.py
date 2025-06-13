@@ -1,6 +1,5 @@
 """Test image format reading functionality."""
 
-import pytest
 from images_to_zarr import I2Z_SUPPORTED_EXTS
 
 

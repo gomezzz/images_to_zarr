@@ -1,6 +1,5 @@
 """Test metadata handling functionality."""
 
-import pytest
 import pandas as pd
 import zarr
 
