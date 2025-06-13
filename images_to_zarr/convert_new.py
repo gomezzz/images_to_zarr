@@ -9,7 +9,6 @@ from tqdm import tqdm
 from loguru import logger
 from astropy.io import fits
 from PIL import Image
-from skimage import transform
 
 from images_to_zarr import I2Z_SUPPORTED_EXTS
 
@@ -155,6 +154,12 @@ def _resize_image(
     data: np.ndarray, new_size: tuple[int, int], interpolation_order: int = 1
 ) -> np.ndarray:
     """Resize image using scikit-image with specified interpolation order."""
+    try:
+        from skimage import transform
+    except ImportError:
+        raise ImportError(
+            "scikit-image is required for image resizing. Install it with: pip install scikit-image"
+        )
 
     if data.ndim == 2:
         # Grayscale image (H, W)
@@ -322,10 +327,10 @@ def convert(
         Optional CSV file with at least a ``filename`` column; additional fields
         (e.g. ``source_id``, ``ra``, ``dec`` …) are copied verbatim into
         a Parquet side-car and attached as Zarr attributes for easy joins.
-        If not provided, metadata will be created from just the filenames.    output_dir
-        Destination path. If the path ends with '.zarr', it will be used as the
-        zarr store path directly. Otherwise, a directory called ``<name>.zarr``
-        is created inside it. Existing stores are refused unless *overwrite* is set.
+        If not provided, metadata will be created from just the filenames.
+    output_dir
+        Destination path; a directory called ``<name>.zarr`` is created
+        inside it.  Existing stores are refused unless *overwrite* is set.
     num_parallel_workers
         Threads or processes used to ingest images and write chunks.
     fits_extension
@@ -436,12 +441,7 @@ def convert(
             metadata_df = pd.DataFrame({"filename": [img_path.name for img_path in image_files]})
             store_name = "images.zarr"
 
-    # Handle output path: if user provided a .zarr path, use it directly
-    # Otherwise create a .zarr directory inside the provided directory
-    if str(output_dir).endswith(".zarr"):
-        zarr_path = output_dir
-    else:
-        zarr_path = output_dir / store_name
+    zarr_path = output_dir / store_name
 
     if zarr_path.exists():
         if overwrite:

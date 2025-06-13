@@ -32,6 +32,18 @@ def main() -> None:
 @click.option("--compressor", default="lz4", help="Compression codec")
 @click.option("--clevel", default=1, help="Compression level")
 @click.option("--overwrite", is_flag=True, help="Overwrite existing store")
+@click.option(
+    "--resize",
+    default=None,
+    help="Resize all images to specified dimensions as 'height,width' (e.g., '512,512'). "
+    "If not specified, all images must have the same dimensions.",
+)
+@click.option(
+    "--interpolation-order",
+    default=1,
+    type=click.IntRange(0, 5),
+    help="Interpolation order for resizing: 0=nearest, 1=linear, 2=quadratic, 3=cubic, 4=quartic, 5=quintic",
+)
 def convert(**kw):
     """Convert image folders to Zarr format."""
     # Parse chunk shape
@@ -46,6 +58,20 @@ def convert(**kw):
         except ValueError:
             pass  # Keep as string
         kw["fits_extension"] = fits_ext
+
+    # Handle resize parameter
+    resize_str = kw.pop("resize", None)
+    if resize_str is not None:
+        try:
+            height, width = map(int, resize_str.split(","))
+            kw["resize"] = (height, width)
+        except ValueError:
+            click.echo(
+                f"Error: Invalid resize format '{resize_str}'. Use 'height,width' (e.g., '512,512')"
+            )
+            return
+    else:
+        kw["resize"] = None
 
     kw["chunk_shape"] = chunk_shape
 
