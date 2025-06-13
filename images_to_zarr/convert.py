@@ -199,12 +199,16 @@ def _process_single_image(
     try:
         # Read raw image data
         data, metadata = _read_image_data(image_path, fits_extension)
-
         # Convert to NCHW format
         data = _ensure_nchw_format(data)
 
-        # Sqeueeze if single channel, single image
-        data = data.squeeze()
+        # Remove batch dimension for single images (squeeze only axis 0)
+        if data.ndim == 4 and data.shape[0] == 1:
+            data = data.squeeze(axis=0)  # (1, C, H, W) -> (C, H, W)
+
+        # For single-channel images, also remove the channel dimension if target is 2D
+        if data.shape[0] == 1 and len(target_shape) == 2:
+            data = data.squeeze(axis=0)  # (1, H, W) -> (H, W)
 
         # Apply resizing if requested
         if resize is not None:
@@ -472,14 +476,36 @@ def convert(
         max_channels = 1
         sample_dtype = np.uint8
         detected_height, detected_width = None, None
-
         # Analyze sample images to determine properties
         for img_path in image_files[:sample_size]:
             try:
                 if img_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
                     with Image.open(img_path) as img:
                         w, h = img.size
-                        c = 3 if img.mode == "RGB" else 1
+                        # Properly detect channel count based on mode
+                        if img.mode == "RGB":
+                            c = 3
+                        elif img.mode == "RGBA":
+                            c = 4
+                        elif img.mode in ["L", "P"]:  # Grayscale, Palette
+                            c = 1
+                        elif img.mode in ["LA"]:  # Grayscale + Alpha
+                            c = 2
+                        else:
+                            # Fallback for other modes
+                            c = len(img.getbands()) if hasattr(img, "getbands") else 1
+
+                        if img.mode in ["I", "I;16"]:
+                            sample_dtype = np.uint16
+                        elif img.mode == "F":
+                            sample_dtype = np.float32
+                            c = 1
+                        elif img.mode in ["LA"]:  # Grayscale + Alpha
+                            c = 2
+                        else:
+                            # Fallback for other modes
+                            c = len(img.getbands()) if hasattr(img, "getbands") else 1
+
                         if img.mode in ["I", "I;16"]:
                             sample_dtype = np.uint16
                         elif img.mode == "F":
