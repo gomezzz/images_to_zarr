@@ -254,7 +254,6 @@ output_dir/
 
 **Note**: If you specify an output directory ending with `.zarr` (e.g., `/path/to/my_dataset.zarr`), 
 that path will be used directly as the Zarr store, creating a cleaner output structure.
-```
 
 ### Zarr Store Contents
 
