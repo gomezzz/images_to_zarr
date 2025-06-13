@@ -9,6 +9,7 @@ from tqdm import tqdm
 from loguru import logger
 from astropy.io import fits
 from PIL import Image
+from skimage import transform
 
 from images_to_zarr import I2Z_SUPPORTED_EXTS
 
@@ -150,44 +151,100 @@ def _ensure_nchw_format(data: np.ndarray) -> np.ndarray:
     return data
 
 
+def _resize_image(
+    data: np.ndarray, new_size: tuple[int, int], interpolation_order: int = 1
+) -> np.ndarray:
+    """Resize image using scikit-image with specified interpolation order."""
+
+    if data.ndim == 2:
+        # Grayscale image (H, W)
+        return transform.resize(
+            data, new_size, order=interpolation_order, preserve_range=True, anti_aliasing=None
+        ).astype(data.dtype)
+    elif data.ndim == 3:
+        # Multi-channel image (C, H, W) or (H, W, C)
+        if data.shape[0] <= 4:  # Assume CHW format
+            resized_channels = []
+            for c in range(data.shape[0]):
+                resized_channel = transform.resize(
+                    data[c],
+                    new_size,
+                    order=interpolation_order,
+                    preserve_range=True,
+                    anti_aliasing=None,
+                )
+                resized_channels.append(resized_channel)
+            return np.stack(resized_channels, axis=0).astype(data.dtype)
+        else:  # Assume HWC format
+            return transform.resize(
+                data,
+                new_size + (data.shape[2],),
+                order=interpolation_order,
+                preserve_range=True,
+                anti_aliasing=None,
+            ).astype(data.dtype)
+    else:
+        raise ValueError(f"Cannot resize image with {data.ndim} dimensions")
+
+
 def _process_single_image(
     image_path: Path,
     target_shape: tuple,
     target_dtype: np.dtype,
     fits_extension: int | str | Sequence[int | str] | None = None,
+    resize: tuple[int, int] | None = None,
+    interpolation_order: int = 1,
 ) -> tuple[np.ndarray, dict]:
     """Process a single image efficiently."""
     try:
         # Read raw image data
         data, metadata = _read_image_data(image_path, fits_extension)
-
         # Convert to NCHW format
         data = _ensure_nchw_format(data)
 
-        # Handle different image dimensions by padding/cropping to match zarr shape
-        if len(data.shape) == 4 and len(target_shape) == 3:
-            # Remove batch dimension for storage if target is 3D
-            data = data[0]
-        elif len(data.shape) == 4 and len(target_shape) == 4:
-            # Keep 4D shape - already in NCHW
-            pass
+        # Remove batch dimension for single images (squeeze only axis 0)
+        if data.ndim == 4 and data.shape[0] == 1:
+            data = data.squeeze(axis=0)  # (1, C, H, W) -> (C, H, W)
 
-        # Efficient resize/crop without creating full zeros array
-        final_data = np.zeros(target_shape, dtype=target_dtype)
+        # For single-channel images, also remove the channel dimension if target is 2D
+        if data.shape[0] == 1 and len(target_shape) == 2:
+            data = data.squeeze(axis=0)  # (1, H, W) -> (H, W)
 
-        # Copy data with appropriate slicing
-        slices = tuple(slice(0, min(s, t)) for s, t in zip(data.shape, target_shape))
-        final_data[slices] = data[slices]
+        # Apply resizing if requested
+        if resize is not None:
+            height, width = resize
+            if data.ndim == 3:  # CHW format
+                if data.shape[1:] != (height, width):
+                    data = _resize_image(data, (height, width), interpolation_order)
+            elif data.ndim == 2:  # HW format
+                if data.shape != (height, width):
+                    data = _resize_image(data, (height, width), interpolation_order)
+        else:
+            # Check if dimensions match target - raise error if not
+            if data.shape != target_shape:
+                raise ValueError(
+                    f"Image {image_path.name} has shape {data.shape} but expected {target_shape}. "
+                    "Use the 'resize' parameter to automatically resize images."
+                )
+
+        # Ensure final data matches target shape
+        if data.shape != target_shape:
+            # Efficient resize/crop without creating full zeros array
+            final_data = np.zeros(target_shape, dtype=target_dtype)
+            # Copy data with appropriate slicing
+            slices = tuple(slice(0, min(s, t)) for s, t in zip(data.shape, target_shape))
+            final_data[slices] = data[slices]
+            data = final_data
 
         # Update metadata to reflect final processed shape and dtype
         metadata.update(
             {
-                "processed_shape": final_data.shape,
-                "processed_dtype": str(final_data.dtype),
+                "processed_shape": data.shape,
+                "processed_dtype": str(target_dtype),
             }
         )
 
-        return final_data, metadata
+        return data.astype(target_dtype), metadata
 
     except Exception as e:
         logger.error(f"Failed to process {image_path}: {e}")
@@ -206,6 +263,8 @@ def _process_image_batch(
     zarr_array: zarr.Array,
     start_idx: int,
     fits_extension: int | str | Sequence[int | str] | None = None,
+    resize: tuple[int, int] | None = None,
+    interpolation_order: int = 1,
 ) -> list[dict]:
     """Process a batch of images and write to zarr array efficiently."""
     # Process in same thread to avoid pickle issues with zarr arrays
@@ -220,7 +279,7 @@ def _process_image_batch(
     # Process images sequentially within batch (I/O bound)
     for i, image_path in enumerate(image_paths):
         data, metadata = _process_single_image(
-            image_path, target_shape, target_dtype, fits_extension
+            image_path, target_shape, target_dtype, fits_extension, resize, interpolation_order
         )
         batch_data[i] = data
         batch_metadata.append(metadata)
@@ -238,12 +297,14 @@ def convert(
     recursive: bool = False,
     num_parallel_workers: int = 8,
     fits_extension: int | str | Sequence[int | str] | None = None,
+    resize: tuple[int, int] | None = None,
+    interpolation_order: int = 1,
     *,
     images: np.ndarray | None = None,
     image_metadata: list[dict] | None = None,
     chunk_shape: tuple[int, int, int] = (1, 256, 256),
-    compressor: str = "lz4",  # Changed default to fastest compressor
-    clevel: int = 1,  # Changed default to fastest compression level
+    compressor: str = "lz4",
+    clevel: int = 1,
     overwrite: bool = False,
 ) -> Path:
     """
@@ -260,10 +321,10 @@ def convert(
         Optional CSV file with at least a ``filename`` column; additional fields
         (e.g. ``source_id``, ``ra``, ``dec`` …) are copied verbatim into
         a Parquet side-car and attached as Zarr attributes for easy joins.
-        If not provided, metadata will be created from just the filenames.
-    output_dir
-        Destination path; a directory called ``<name>.zarr`` is created
-        inside it.  Existing stores are refused unless *overwrite* is set.
+        If not provided, metadata will be created from just the filenames.    output_dir
+        Destination path. If the path ends with '.zarr', it will be used as the
+        zarr store path directly. Otherwise, a directory called ``<name>.zarr``
+        is created inside it. Existing stores are refused unless *overwrite* is set.
     num_parallel_workers
         Threads or processes used to ingest images and write chunks.
     fits_extension
@@ -272,6 +333,18 @@ def convert(
         * ``None``  →  use extension 0
         * *int* or *str*  →  single HDU
         * *Sequence*  →  concatenate multiple HDUs along the channel axis
+    resize
+        If specified as (height, width), all images will be resized to this size.
+        If None, images must have matching dimensions or an error is raised.
+    interpolation_order
+        Interpolation order for resizing (0-5):
+
+        * 0: Nearest-neighbor
+        * 1: Bi-linear (default)
+        * 2: Bi-quadratic
+        * 3: Bi-cubic
+        * 4: Bi-quartic
+        * 5: Bi-quintic
     chunk_shape
         Chunk layout **(n_images, height, width)** ; the first dimension
         **must be 1** so each image maps to exactly one chunk.
@@ -297,6 +370,10 @@ def convert(
       for 100 M images but remains S3-friendly.
     """
     logger.info("Starting image to Zarr conversion")
+
+    # Validate interpolation order
+    if not (0 <= interpolation_order <= 5):
+        raise ValueError("interpolation_order must be between 0 and 5")
 
     # Convert inputs to Path objects
     output_dir = Path(output_dir)
@@ -358,7 +435,12 @@ def convert(
             metadata_df = pd.DataFrame({"filename": [img_path.name for img_path in image_files]})
             store_name = "images.zarr"
 
-    zarr_path = output_dir / store_name
+    # Handle output path: if user provided a .zarr path, use it directly
+    # Otherwise create a .zarr directory inside the provided directory
+    if str(output_dir).endswith(".zarr"):
+        zarr_path = output_dir
+    else:
+        zarr_path = output_dir / store_name
 
     if zarr_path.exists():
         if overwrite:
@@ -386,30 +468,53 @@ def convert(
         metadata_df = pd.DataFrame(image_metadata)
 
     else:
-        # File-based conversion - sample files to determine dimensions
-        sample_size = min(3, len(image_files))  # Reduced sample size for speed
-        max_height, max_width = 224, 224  # Assume common size, adjust if needed
-        max_channels = 3
-        sample_dtype = np.uint8
+        # File-based conversion - determine dimensions
+        num_images = len(image_files)
 
+        # Sample files to determine dimensions, channels, and dtype
+        sample_size = min(3, len(image_files))
+        max_channels = 1
+        sample_dtype = np.uint8
+        detected_height, detected_width = None, None
+        # Analyze sample images to determine properties
         for img_path in image_files[:sample_size]:
             try:
-                # Quick dimension check without full processing
                 if img_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
                     with Image.open(img_path) as img:
                         w, h = img.size
-                        c = 3 if img.mode == "RGB" else 1
+                        # Properly detect channel count based on mode
+                        if img.mode == "RGB":
+                            c = 3
+                        elif img.mode == "RGBA":
+                            c = 4
+                        elif img.mode in ["L", "P"]:  # Grayscale, Palette
+                            c = 1
+                        elif img.mode in ["LA"]:  # Grayscale + Alpha
+                            c = 2
+                        else:
+                            # Fallback for other modes
+                            c = len(img.getbands()) if hasattr(img, "getbands") else 1
+
+                        if img.mode in ["I", "I;16"]:
+                            sample_dtype = np.uint16
+                        elif img.mode == "F":
+                            sample_dtype = np.float32
+                            c = 1
+                        elif img.mode in ["LA"]:  # Grayscale + Alpha
+                            c = 2
+                        else:
+                            # Fallback for other modes
+                            c = len(img.getbands()) if hasattr(img, "getbands") else 1
+
                         if img.mode in ["I", "I;16"]:
                             sample_dtype = np.uint16
                         elif img.mode == "F":
                             sample_dtype = np.float32
                 else:
                     data, _ = _read_image_data(img_path, fits_extension)
-                    # Convert to NCHW to get consistent dimensions
                     data_nchw = _ensure_nchw_format(data)
 
                     if len(data_nchw.shape) == 4:
-                        # NCHW format: (1, C, H, W)
                         _, c, h, w = data_nchw.shape
                     elif len(data.shape) == 2:
                         h, w = data.shape
@@ -419,44 +524,93 @@ def convert(
                             h, w, c = data.shape
                         else:  # CHW format
                             c, h, w = data.shape
-                    else:
-                        continue
 
-                    # Use the most general dtype
                     if np.issubdtype(data.dtype, np.floating):
                         sample_dtype = np.float32
                     elif data.dtype == np.uint16:
                         sample_dtype = np.uint16
 
-                max_height = max(max_height, h)
-                max_width = max(max_width, w)
+                # Track max channels across all images
                 max_channels = max(max_channels, c)
+                # Track dimensions for validation (if no resize)
+                if detected_height is None:
+                    detected_height, detected_width = h, w
+                elif (h, w) != (detected_height, detected_width) and resize is None:
+                    raise ValueError(
+                        f"Image {img_path.name} has dimensions {h}x{w} but expected "
+                        f"{detected_height}x{detected_width}. All images must have the same dimensions "
+                        "or use the 'resize' parameter to automatically resize them."
+                    )
 
+            except ValueError as ve:
+                # Re-raise ValueError (dimension mismatch) immediately
+                if "All images must have the same dimensions" in str(ve):
+                    raise ve
+                else:
+                    logger.warning(f"Could not analyze {img_path}: {ve}")
+                    continue
             except Exception as e:
                 logger.warning(f"Could not analyze {img_path}: {e}")
                 continue
 
-        num_images = len(image_files)
+        # Determine final dimensions
+        if resize is not None:
+            # User specified resize - use those dimensions
+            max_height, max_width = resize
+            logger.info(f"Using resize dimensions: {max_height}x{max_width}")
+        else:
+            # No resize - use detected dimensions (all must match)
+            if detected_height is None or detected_width is None:
+                raise ValueError("Could not determine image dimensions from sample files")
+            max_height, max_width = detected_height, detected_width
+            logger.info(f"Using detected dimensions: {max_height}x{max_width}")
 
-    # Adjust chunk shape to match data dimensions - optimize for parallel access
-    if max_channels > 1:
+        # Validate that we have valid dimensions
+        if max_height is None or max_width is None:
+            raise ValueError(
+                "Could not determine image dimensions"
+            )  # Determine array shape based on channels
+    if images is not None:
+        # For memory conversion, always preserve the input shape (always 4D)
+        array_shape = images.shape
+    elif max_channels > 1:
         array_shape = (num_images, max_channels, max_height, max_width)
-        # Chunk multiple images together for better compression and I/O
-        chunk_images = min(100, num_images)  # Chunk multiple images per block
-        chunk_shape = (
-            chunk_images,
+    else:
+        array_shape = (num_images, max_height, max_width)
+
+    # Handle chunk_shape: respect user input or create smart defaults
+    if len(chunk_shape) == len(array_shape):
+        # User chunk shape matches array dimensions - use it (clamp to array size)
+        final_chunk_shape = tuple(min(c, s) for c, s in zip(chunk_shape, array_shape))
+        logger.info(f"Using user-specified chunk shape: {final_chunk_shape}")
+    elif len(chunk_shape) == 3 and len(array_shape) == 4:
+        # User provided 3D chunk shape but we have 4D array - expand to include channels
+        final_chunk_shape = (
+            min(chunk_shape[0], num_images),
             max_channels,
             min(chunk_shape[1], max_height),
             min(chunk_shape[2], max_width),
         )
+        logger.info(f"Expanded 3D chunk shape to 4D: {final_chunk_shape}")
     else:
-        array_shape = (num_images, max_height, max_width)
-        chunk_images = min(100, num_images)
-        chunk_shape = (
-            chunk_images,
-            min(chunk_shape[1], max_height),
-            min(chunk_shape[2], max_width),
-        )
+        # Create smart defaults
+        default_chunk_size = min(10, num_images)  # Reasonable default
+        if max_channels > 1:
+            final_chunk_shape = (
+                default_chunk_size,
+                max_channels,
+                min(256, max_height),
+                min(256, max_width),
+            )
+        else:
+            final_chunk_shape = (
+                default_chunk_size,
+                min(256, max_height),
+                min(256, max_width),
+            )
+        logger.info(f"Using default chunk shape: {final_chunk_shape}")
+
+    chunk_shape = final_chunk_shape
 
     logger.info(f"Creating Zarr array with shape {array_shape} and chunks {chunk_shape}")
 
@@ -532,7 +686,13 @@ def convert(
             for i in range(0, len(image_files), optimal_batch_size):
                 batch = image_files[i : i + optimal_batch_size]
                 future = executor.submit(
-                    _process_image_batch, batch, images_array, i, fits_extension
+                    _process_image_batch,
+                    batch,
+                    images_array,
+                    i,
+                    fits_extension,
+                    resize,
+                    interpolation_order,
                 )
                 futures.append(future)
 
@@ -578,6 +738,8 @@ def convert(
                 "recursive_scan": recursive,
                 "source_folders": [str(f) for f in folders] if folders else [],
                 "direct_memory_conversion": images is not None,
+                "resize": resize,
+                "interpolation_order": interpolation_order,
             },
         }
     )

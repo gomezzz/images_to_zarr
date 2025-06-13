@@ -232,3 +232,108 @@ class TestCLI:
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
         # Should contain version info
+
+    def test_resize_and_interpolation_options(self, cli_test_setup):
+        """Test CLI with resize and interpolation options."""
+        setup = cli_test_setup
+        runner = CliRunner()
+
+        # Create images with different sizes
+        images_dir = setup["temp_dir"] / "mixed_sizes"
+        images_dir.mkdir()
+
+        sizes = [(20, 30), (40, 50)]
+        for i, (h, w) in enumerate(sizes):
+            img_data = np.random.randint(0, 255, (h, w), dtype=np.uint8)
+            img_path = images_dir / f"mixed_{i}.png"
+            Image.fromarray(img_data, mode="L").save(img_path)
+
+        # Test with resize and interpolation options
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(images_dir),
+                "--out",
+                str(setup["output_dir"] / "resized"),
+                "--resize",
+                "32,32",  # height,width
+                "--interpolation-order",
+                "1",
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+        # Check that zarr store was created
+        zarr_files = list((setup["output_dir"] / "resized").glob("*.zarr"))
+        assert len(zarr_files) == 1
+
+    def test_chunk_shape_cli_option(self, cli_test_setup):
+        """Test CLI with custom chunk shape option."""
+        setup = cli_test_setup
+        runner = CliRunner()
+
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(setup["images_dir"]),
+                "--out",
+                str(setup["output_dir"] / "chunked"),
+                "--chunk-shape",
+                "2,16,16",  # custom chunking
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code == 0, f"CLI failed: {result.output}"
+
+        # Check that zarr store was created
+        zarr_files = list((setup["output_dir"] / "chunked").glob("*.zarr"))
+        assert len(zarr_files) == 1
+
+    def test_invalid_resize_format(self, cli_test_setup):
+        """Test CLI error handling for invalid resize format."""
+        setup = cli_test_setup
+        runner = CliRunner()
+
+        # Test invalid resize format
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(setup["images_dir"]),
+                "--out",
+                str(setup["output_dir"]),
+                "--resize",
+                "invalid",  # Invalid format
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code != 0
+
+    def test_invalid_interpolation_order(self, cli_test_setup):
+        """Test CLI error handling for invalid interpolation order."""
+        setup = cli_test_setup
+        runner = CliRunner()
+
+        # Test invalid interpolation order
+        result = runner.invoke(
+            main,
+            [
+                "convert",
+                str(setup["images_dir"]),
+                "--out",
+                str(setup["output_dir"]),
+                "--resize",
+                "32,32",
+                "--interpolation-order",
+                "10",  # Invalid order (must be 0-5)
+                "--overwrite",
+            ],
+        )
+
+        assert result.exit_code != 0

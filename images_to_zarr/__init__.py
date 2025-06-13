@@ -5,7 +5,7 @@ from loguru import logger
 I2Z_SUPPORTED_EXTS = {".fits", ".fit", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
 # Version
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 # Logging configuration
 
@@ -44,7 +44,8 @@ configure_logging(enable=True)
 
 # Import after setting up constants to avoid circular imports
 from .convert import convert  # noqa: E402
-from .inspect import inspect, display_sample_images  # noqa: E402
+from .inspect import inspect  # noqa: E402
+from .display_sample_images import display_sample_images  # noqa: E402
 
 __all__ = [
     "convert",

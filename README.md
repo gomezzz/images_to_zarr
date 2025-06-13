@@ -26,6 +26,8 @@ A Python module to efficiently bulk-convert large collections of heterogeneous i
 pip install images-to-zarr
 ```
 
+After installation, the CLI command `images_to_zarr` will be available system-wide.
+
 ### From source
 
 ```bash
@@ -55,7 +57,13 @@ images_to_zarr convert /path/to/images --metadata metadata.csv --out /output/dir
 # Basic conversion without metadata (filenames only)
 images_to_zarr convert /path/to/images --out /output/dir
 
-# Advanced options
+# Convert images to Zarr with metadata
+images_to_zarr convert /path/to/images --metadata metadata.csv --out /output/dir
+
+# Convert without metadata (filenames only)
+images_to_zarr convert /path/to/images --out /output/dir
+
+# Advanced options with resize
 images_to_zarr convert /path/to/images1 /path/to/images2 \
     --metadata metadata.csv \
     --out /output/dir \
@@ -65,6 +73,8 @@ images_to_zarr convert /path/to/images1 /path/to/images2 \
     --chunk-shape 1,512,512 \
     --compressor zstd \
     --clevel 5 \
+    --resize 256,256 \
+    --interpolation-order 1 \
     --overwrite
 ```
 
@@ -88,6 +98,20 @@ zarr_path = convert(
     recursive=True,
     metadata="/path/to/metadata.csv",  # Optional
     output_dir="/output/dir",
+    num_parallel_workers=8,
+    chunk_shape=(1, 256, 256),
+    compressor="zstd",
+    clevel=4
+)
+
+# Convert images to Zarr with automatic resizing
+zarr_path = convert(
+    folders=["/path/to/images"],
+    recursive=True,
+    metadata="/path/to/metadata.csv",  # Optional
+    output_dir="/output/dir",
+    resize=(256, 256),  # Resize all images to 256x256
+    interpolation_order=1,  # Bi-linear interpolation
     num_parallel_workers=8,
     chunk_shape=(1, 256, 256),
     compressor="zstd",
@@ -125,7 +149,8 @@ zarr_path = convert(
 # Inspect the result
 inspect(zarr_path)
 
-# Display random sample images from the store
+# Display random sample images from the store (with auto-normalization for .fits)
+from images_to_zarr import display_sample_images
 display_sample_images(zarr_path, num_samples=6, figsize=(15, 10))
 
 # Save sample images to file
@@ -178,6 +203,31 @@ convert(..., fits_extension="SCI")
 convert(..., fits_extension=[0, 1, "ERR"])
 ```
 
+### Image Resizing
+
+When dealing with images of different sizes, you can use the resize functionality:
+
+```python
+# Resize all images to 512x512 using bi-linear interpolation
+convert(
+    folders=["/path/to/images"],
+    output_dir="/output/dir",
+    resize=(512, 512),
+    interpolation_order=1  # 0=nearest, 1=linear, 2=quadratic, etc.
+)
+
+# If resize is not specified, all images must have the same dimensions
+# or an error will be raised
+```
+
+**Interpolation orders:**
+- 0: Nearest-neighbor (fastest, lowest quality)
+- 1: Bi-linear (default, good balance)
+- 2: Bi-quadratic
+- 3: Bi-cubic (slower, higher quality)
+- 4: Bi-quartic
+- 5: Bi-quintic (slowest, highest quality)
+
 ### Configuration Options
 
 | Parameter              | Description                                     | Default       |
@@ -188,16 +238,22 @@ convert(..., fits_extension=[0, 1, "ERR"])
 | `num_parallel_workers` | Number of processing threads                    | 8             |
 | `recursive`            | Scan subdirectories recursively                 | False         |
 | `fits_extension`       | FITS HDU(s) to read (int, str, or sequence)     | None (uses 0) |
+| `resize`               | Resize images to (height, width)                | None          |
+| `interpolation_order`  | Resize interpolation order (0-5)                | 1 (bi-linear) |
 | `overwrite`            | Overwrite existing store if present             | False         |
 
 ## Output Structure
 
 ```
 output_dir/
-├── metadata.zarr/           # Main Zarr store
-│   ├── images/             # Image data arrays
-│   └── .zarray, .zgroup    # Zarr metadata
-└── metadata.parquet  # Combined metadata
+├── images.zarr/              # Main Zarr store (if output_dir doesn't end with .zarr)
+│   ├── images/              # Image data arrays
+│   └── .zarray, .zgroup     # Zarr metadata
+└── images_metadata.parquet  # Combined metadata
+```
+
+**Note**: If you specify an output directory ending with `.zarr` (e.g., `/path/to/my_dataset.zarr`), 
+that path will be used directly as the Zarr store, creating a cleaner output structure.
 ```
 
 ### Zarr Store Contents
@@ -256,6 +312,18 @@ Original data type distribution:
   float32: 10.0%
 ================================================================================
 ```
+
+## Image Display and Visualization
+
+The `display_sample_images` function provides intelligent visualization with automatic normalization:
+
+```python
+from images_to_zarr import display_sample_images
+
+# Display with automatic normalization (handles .fits files with arbitrary ranges)
+display_sample_images("/path/to/store.zarr", num_samples=6)
+```
+
 
 ## Error Handling
 
