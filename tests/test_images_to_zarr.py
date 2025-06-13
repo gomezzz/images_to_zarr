@@ -1036,7 +1036,8 @@ class TestDisplay:
             folders=[images_dir],
             output_dir=output_dir,
             overwrite=True,
-        )        # Test basic display (should not raise errors)
+        )
+        # Test basic display (should not raise errors)
         try:
             # Test with default parameters (save to file to avoid blocking during tests)
             save_path1 = temp_dir / "test_display_default.png"
@@ -1048,7 +1049,9 @@ class TestDisplay:
 
             # Test with all images if fewer than num_samples (save to file)
             save_path3 = temp_dir / "test_display_many.png"
-            display_sample_images(zarr_path, num_samples=10, save_path=save_path3)  # More than available
+            display_sample_images(
+                zarr_path, num_samples=10, save_path=save_path3
+            )  # More than available
 
         except ImportError:
             # matplotlib not available - this is expected in some test environments
