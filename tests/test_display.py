@@ -24,7 +24,7 @@ class TestDisplay:
             output_dir=output_dir,
             overwrite=True,
         )
-        
+
         # Test basic display (should not raise errors)
         try:
             # Test with default parameters (save to file to avoid blocking during tests)

@@ -27,7 +27,7 @@ class TestMetadata:
         # Load saved metadata
         metadata_parquet = zarr_path.parent / f"{zarr_path.stem}_metadata.parquet"
         saved_metadata = pd.read_parquet(metadata_parquet)
-        
+
         # Check original columns are preserved
         for col in metadata_df.columns:
             assert col in saved_metadata.columns

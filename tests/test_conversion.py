@@ -268,16 +268,16 @@ class TestNCHWFormat:
         # Create directory with multiple grayscale images of the same size
         images_dir = temp_dir / "grayscale_images"
         images_dir.mkdir()
-        
+
         # Create multiple grayscale images with same dimensions
         sample_data = np.random.randint(0, 255, (424, 424), dtype=np.uint8)
-        
+
         files = []
         for i in range(3):
             img_path = images_dir / f"grayscale_{i}.png"
             Image.fromarray(sample_data, mode="L").save(img_path)
             files.append(img_path)
-        
+
         # This should work without errors (previously caused shape mismatch)
         zarr_path = convert(
             output_dir=temp_dir,
@@ -285,17 +285,17 @@ class TestNCHWFormat:
             chunk_shape=(1, 256, 256),
             overwrite=True,
         )
-        
+
         # Verify the result
         assert zarr_path.exists()
-        
+
         store = zarr.storage.LocalStore(zarr_path)
         root = zarr.open_group(store=store, mode="r")
         images_array = root["images"]
-        
+
         # Should be 3D for grayscale images: (N, H, W)
         assert images_array.shape == (3, 424, 424)
         assert images_array.ndim == 3
-        
+
         # Verify data integrity
         assert np.array_equal(images_array[0], sample_data)
