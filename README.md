@@ -2,7 +2,6 @@
 
 [![PyPI version](https://badge.fury.io/py/images-to-zarr.svg)](https://badge.fury.io/py/images-to-zarr)
 [![Python](https://img.shields.io/pypi/pyversions/images-to-zarr.svg)](https://pypi.org/project/images-to-zarr/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Python module to efficiently bulk-convert large collections of heterogeneous images (FITS, PNG, JPEG, TIFF) into sharded Zarr v3 stores for fast analysis and cloud-native workflows.
 
