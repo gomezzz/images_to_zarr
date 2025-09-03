@@ -13,6 +13,6 @@ dependencies:
   - pillow                      # For pip dependencies
   - pytest                   # Testing
   - pytest-cov              # Coverage testing
-  - python=3.11
+  - python>=3.10
   - tqdm                     # nice progress bars
   - zarr>=3.0.0b0           # v3 spec support
