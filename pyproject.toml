@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "images_to_zarr"
-version = "0.3.1"
+version = "0.3.2"
 description = "Tiny Python module to bulk-convert large amounts of images into zarr files"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -28,7 +28,7 @@ dependencies = [
     "pandas",
     "scikit-image",
     "tqdm",
-    "zarr>=3.0.0b0",
+    "zarr>=3.0.0a5",
 ]
 
 [project.optional-dependencies]
