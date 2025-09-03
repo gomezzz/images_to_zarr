@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Scientific/Engineering :: Astronomy",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "astropy",
     "click",
