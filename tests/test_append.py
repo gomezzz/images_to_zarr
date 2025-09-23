@@ -283,12 +283,11 @@ class TestAppendFileBasedConversion:
         initial_dir = temp_dir / "initial_images"
         initial_dir.mkdir()
         import shutil
+
         shutil.copy(files[0], initial_dir)
 
         # Create initial store
-        initial_metadata = pd.DataFrame(
-            {"filename": [files[0].name], "category": ["initial"]}
-        )
+        initial_metadata = pd.DataFrame({"filename": [files[0].name], "category": ["initial"]})
         initial_metadata_path = temp_dir / "initial_meta.csv"
         initial_metadata.to_csv(initial_metadata_path, index=False)
 
@@ -308,9 +307,7 @@ class TestAppendFileBasedConversion:
             shutil.copy(f, append_dir)
 
         # Create append metadata
-        append_metadata = pd.DataFrame(
-            {"filename": [files[1].name], "category": ["appended"]}
-        )
+        append_metadata = pd.DataFrame({"filename": [files[1].name], "category": ["appended"]})
         append_metadata_path = temp_dir / "append_meta.csv"
         append_metadata.to_csv(append_metadata_path, index=False)
 
