@@ -5,7 +5,7 @@ from loguru import logger
 I2Z_SUPPORTED_EXTS = {".fits", ".fit", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
 # Version
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 # Logging configuration
 
