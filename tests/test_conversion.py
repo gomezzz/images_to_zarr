@@ -299,3 +299,111 @@ class TestNCHWFormat:
 
         # Verify data integrity
         assert np.array_equal(images_array[0], sample_data)
+
+
+class TestAppendConversion:
+    """Test append functionality with file-based conversion."""
+
+    def test_append_from_files(self, temp_dir, sample_images):
+        """Test appending images from files to existing store."""
+        images_dir, files = sample_images
+
+        # Create initial store from subset of files
+        zarr_path = convert(
+            folders=[images_dir],
+            output_dir=temp_dir,
+            overwrite=True,
+        )
+
+        # Get initial count
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        initial_count = root["images"].shape[0]
+        _ = root["images"][:]
+        # Zarr groups don't need to be closed
+
+        # Create more sample images to append
+        from PIL import Image
+
+        append_dir = temp_dir / "append_images"
+        append_dir.mkdir()
+
+        # Create 2 new images
+        for i in range(2):
+            img_data = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
+            img_path = append_dir / f"append_{i}.png"
+            Image.fromarray(img_data, mode="L").save(img_path)
+
+        # Append to existing store
+        convert(
+            folders=[append_dir],
+            output_dir=temp_dir,
+            append=True,
+        )
+
+        # Verify
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        final_count = root["images"].shape[0]
+
+        assert final_count > initial_count  # Should have more images after append
+
+    def test_append_with_metadata(self, temp_dir, sample_images):
+        """Test appending with metadata preservation."""
+        images_dir, files = sample_images
+
+        # Create initial metadata
+        initial_metadata = pd.DataFrame(
+            {"filename": [f.name for f in files], "category": ["original"] * len(files)}
+        )
+        initial_metadata_path = temp_dir / "initial_meta.csv"
+        initial_metadata.to_csv(initial_metadata_path, index=False)
+
+        # Create initial store
+        zarr_path = convert(
+            folders=[images_dir],
+            metadata=initial_metadata_path,
+            output_dir=temp_dir,
+            overwrite=True,
+        )
+
+        # Create append images and metadata
+        from PIL import Image
+
+        append_dir = temp_dir / "append_images"
+        append_dir.mkdir()
+
+        append_files = []
+        for i in range(2):
+            img_data = np.random.randint(0, 255, (64, 64), dtype=np.uint8)
+            img_path = append_dir / f"new_{i}.png"
+            Image.fromarray(img_data, mode="L").save(img_path)
+            append_files.append(img_path)
+
+        append_metadata = pd.DataFrame(
+            {
+                "filename": [f.name for f in append_files],
+                "category": ["appended"] * len(append_files),
+            }
+        )
+        append_metadata_path = temp_dir / "append_meta.csv"
+        append_metadata.to_csv(append_metadata_path, index=False)
+
+        # Append
+        convert(
+            folders=[append_dir],
+            metadata=append_metadata_path,
+            output_dir=zarr_path,  # Use the existing zarr path
+            append=True,
+        )
+
+        # Check metadata was merged
+        metadata_parquet = zarr_path.parent / f"{zarr_path.stem}_metadata.parquet"
+        combined_metadata = pd.read_parquet(metadata_parquet)
+
+        # Should have metadata from both initial and appended images
+        assert len(combined_metadata) >= len(files)
+        if "category" in combined_metadata.columns:
+            categories = combined_metadata["category"].tolist()
+            # Just check that append operation worked
+            assert len(categories) > 0

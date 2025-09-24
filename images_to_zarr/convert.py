@@ -12,6 +12,7 @@ from PIL import Image
 from skimage import transform
 
 from images_to_zarr import I2Z_SUPPORTED_EXTS
+from images_to_zarr.append import append_to_zarr
 
 
 def _find_image_files(
@@ -306,6 +307,7 @@ def convert(
     compressor: str = "lz4",
     clevel: int = 1,
     overwrite: bool = False,
+    append: bool = False,
 ) -> Path:
     """
     Re-package a heterogeneous image collection (FITS/PNG/JPEG/TIFF) plus
@@ -354,6 +356,8 @@ def convert(
         Compression level handed to *numcodecs*.
     overwrite
         Destroy an existing store at *output_dir* if present.
+    append
+        Append images to an existing Zarr store. Cannot be used with overwrite=True.
 
     Returns
     -------
@@ -370,6 +374,10 @@ def convert(
       for 100 M images but remains S3-friendly.
     """
     logger.info("Starting image to Zarr conversion")
+
+    # Validate append and overwrite parameters
+    if append and overwrite:
+        raise ValueError("Cannot use both 'append=True' and 'overwrite=True'")
 
     # Validate interpolation order
     if not (0 <= interpolation_order <= 5):
@@ -388,7 +396,8 @@ def convert(
         if not isinstance(images, np.ndarray):
             raise ValueError("images parameter must be a numpy array")
 
-        # Validate that images are 4D for direct conversion (but we'll auto-convert in _ensure_nchw_format)
+        # Validate that images are 4D for direct conversion
+        # (but we'll auto-convert in _ensure_nchw_format)
         if images.ndim != 4:
             raise ValueError("Direct image input must be 4D (NCHW format)")
 
@@ -443,13 +452,18 @@ def convert(
         zarr_path = output_dir / store_name
 
     if zarr_path.exists():
-        if overwrite:
+        if append:
+            # Validate compatibility and append mode
+            logger.info(f"Appending to existing store: {zarr_path}")
+        elif overwrite:
             import shutil
 
             shutil.rmtree(zarr_path)
             logger.info(f"Removed existing store: {zarr_path}")
         else:
             raise FileExistsError(f"Store already exists: {zarr_path}")
+    elif append:
+        raise FileNotFoundError(f"Cannot append to non-existent store: {zarr_path}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -538,8 +552,8 @@ def convert(
                 elif (h, w) != (detected_height, detected_width) and resize is None:
                     raise ValueError(
                         f"Image {img_path.name} has dimensions {h}x{w} but expected "
-                        f"{detected_height}x{detected_width}. All images must have the same dimensions "
-                        "or use the 'resize' parameter to automatically resize them."
+                        f"{detected_height}x{detected_width}. All images must have the same "
+                        "dimensions or use the 'resize' parameter to automatically resize them."
                     )
 
             except ValueError as ve:
@@ -642,26 +656,54 @@ def convert(
         # Use fastest gzip level
         compressor_obj = zarr.codecs.GzipCodec(level=min(3, clevel))
 
-    # Create Zarr store
-    store = zarr.storage.LocalStore(zarr_path)
-    root = zarr.open_group(store=store, mode="w")
+    # Handle append mode vs create mode
+    if append:
+        # In append mode, we just prepare the data and call append_to_zarr
+        if images is not None:
+            # Direct memory append
+            logger.info("Appending images from memory to existing Zarr...")
 
-    # Create the main images array
-    images_array = root.create_array(
-        "images",
-        shape=array_shape,
-        chunks=chunk_shape,
-        dtype=sample_dtype,
-        compressors=[compressor_obj],
-        fill_value=0,
-    )
+            # Prepare metadata DataFrame
+            if image_metadata:
+                metadata_df_append = pd.DataFrame(image_metadata)
+            else:
+                metadata_df_append = None
+
+            # Call append function
+            append_to_zarr(zarr_path, images, metadata_df_append)
+
+            return zarr_path
+        else:
+            # File-based append - need to process images first
+            # We'll process them and then append
+            pass  # Continue with normal flow but append at the end
+
+    if not append:
+        # Create new Zarr store
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="w")
+
+        # Create the main images array
+        images_array = root.create_array(
+            "images",
+            shape=array_shape,
+            chunks=chunk_shape,
+            dtype=sample_dtype,
+            compressors=[compressor_obj],
+            fill_value=0,
+        )
+    else:
+        # Open existing store for append
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r+")
+        images_array = root["images"]
 
     # Process images in parallel with optimized batching
     logger.info(f"Processing {num_images} images with {num_parallel_workers} workers")
 
     metadata_list = []
 
-    if images is not None:
+    if images is not None and not append:
         # Direct memory conversion - write directly to zarr
         logger.info("Writing images from memory to Zarr...")
 
@@ -671,7 +713,7 @@ def convert(
         # Use provided metadata
         metadata_list = image_metadata
 
-    else:
+    elif images is None:
         # File-based conversion with parallel processing
         # Optimize batch size for better I/O and memory usage
         # Larger batches reduce Zarr write overhead, but increase memory usage
@@ -703,46 +745,80 @@ def convert(
                     metadata_list.extend(batch_metadata)
                     pbar.update(1)
 
-    # Create metadata array in Zarr
-    metadata_df_images = pd.DataFrame(metadata_list)
+    # Handle append mode for file-based conversion
+    if append and images is None:
+        # Process images to numpy array first
+        logger.info("Processing images for append...")
 
-    # Save metadata as Parquet
-    parquet_path = zarr_path.parent / f"{zarr_path.stem}_metadata.parquet"
+        # Create a temporary array to hold all processed images
+        processed_images = np.zeros((len(image_files),) + array_shape[1:], dtype=sample_dtype)
 
-    # Merge with original metadata if possible
-    if images is not None:
-        # For direct memory conversion, use the provided metadata
-        combined_metadata = metadata_df_images
-    elif len(metadata_df_images) == len(metadata_df):
-        combined_metadata = pd.concat(
-            [metadata_df.reset_index(drop=True), metadata_df_images.reset_index(drop=True)], axis=1
+        # Process all images
+        for i, img_path in enumerate(image_files):
+            data, img_metadata = _process_single_image(
+                img_path, array_shape[1:], sample_dtype, fits_extension, resize, interpolation_order
+            )
+            processed_images[i] = data
+            metadata_list.append(img_metadata)
+
+        # Create metadata DataFrame
+        metadata_df_images = pd.DataFrame(metadata_list)
+
+        # Merge with original metadata if possible
+        if metadata is not None and len(metadata_df_images) == len(metadata_df):
+            combined_metadata = pd.concat(
+                [metadata_df.reset_index(drop=True), metadata_df_images.reset_index(drop=True)],
+                axis=1,
+            )
+        else:
+            combined_metadata = metadata_df_images
+
+        # Append to existing store
+        append_to_zarr(zarr_path, processed_images, combined_metadata)
+
+    elif not append:
+        # Normal mode - create new store
+        # Create metadata array in Zarr
+        metadata_df_images = pd.DataFrame(metadata_list)
+
+        # Save metadata as Parquet
+        parquet_path = zarr_path.parent / f"{zarr_path.stem}_metadata.parquet"
+
+        # Merge with original metadata if possible
+        if images is not None:
+            # For direct memory conversion, use the provided metadata
+            combined_metadata = metadata_df_images
+        elif len(metadata_df_images) == len(metadata_df):
+            combined_metadata = pd.concat(
+                [metadata_df.reset_index(drop=True), metadata_df_images.reset_index(drop=True)],
+                axis=1,
+            )
+        else:
+            combined_metadata = metadata_df_images
+
+        combined_metadata.to_parquet(parquet_path)
+        logger.info(f"Saved metadata to {parquet_path}")
+
+        # Add attributes to zarr group
+        root.attrs.update(
+            {
+                "total_images": num_images,
+                "image_shape": array_shape[1:],
+                "chunk_shape": chunk_shape[1:],
+                "compressor": compressor,
+                "compression_level": clevel,
+                "metadata_file": str(parquet_path),
+                "supported_extensions": list(I2Z_SUPPORTED_EXTS),
+                "creation_info": {
+                    "fits_extension": fits_extension,
+                    "recursive_scan": recursive,
+                    "source_folders": [str(f) for f in folders] if folders else [],
+                    "direct_memory_conversion": images is not None,
+                    "resize": resize,
+                    "interpolation_order": interpolation_order,
+                },
+            }
         )
-    else:
-        combined_metadata = metadata_df_images
-
-    combined_metadata.to_parquet(parquet_path)
-    logger.info(f"Saved metadata to {parquet_path}")
-
-    # Add attributes to zarr group
-    root.attrs.update(
-        {
-            "total_images": num_images,
-            "image_shape": array_shape[1:],
-            "chunk_shape": chunk_shape[1:],
-            "compressor": compressor,
-            "compression_level": clevel,
-            "metadata_file": str(parquet_path),
-            "supported_extensions": list(I2Z_SUPPORTED_EXTS),
-            "creation_info": {
-                "fits_extension": fits_extension,
-                "recursive_scan": recursive,
-                "source_folders": [str(f) for f in folders] if folders else [],
-                "direct_memory_conversion": images is not None,
-                "resize": resize,
-                "interpolation_order": interpolation_order,
-            },
-        }
-    )
 
     logger.info(f"Successfully created Zarr store: {zarr_path}")
     total_size_mb = sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file()) / 1024**2

@@ -145,3 +145,93 @@ class TestPathStructure:
         assert (
             not nested_zarr_memory.exists()
         ), f"Found nested zarr in memory conversion: {nested_zarr_memory}"
+
+
+class TestMemoryAppend:
+    """Test appending functionality with memory conversion."""
+
+    def test_append_memory_to_memory(self, temp_dir):
+        """Test appending images from memory to existing memory-created store."""
+        # Create initial store
+        initial_images = np.random.random((2, 3, 32, 32)).astype(np.float32)
+        initial_metadata = [{"id": i, "type": "initial"} for i in range(2)]
+
+        zarr_path = convert(
+            output_dir=temp_dir,
+            images=initial_images,
+            image_metadata=initial_metadata,
+            overwrite=True,
+        )
+
+        # Append more images
+        append_images = np.random.random((3, 3, 32, 32)).astype(np.float32)
+        append_metadata = [{"id": i + 2, "type": "appended"} for i in range(3)]
+
+        result_path = convert(
+            output_dir=temp_dir,
+            images=append_images,
+            image_metadata=append_metadata,
+            append=True,
+        )
+
+        assert result_path == zarr_path
+
+        # Verify final state
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        assert images_array.shape == (5, 3, 32, 32)  # 2 + 3 = 5 images
+        assert np.allclose(images_array[:2], initial_images)
+        assert np.allclose(images_array[2:], append_images)
+
+    def test_append_error_validation(self, temp_dir):
+        """Test error handling for append with memory conversion."""
+        # Create initial store
+        initial_images = np.random.random((2, 3, 32, 32)).astype(np.float32)
+
+        _ = convert(
+            output_dir=temp_dir,
+            images=initial_images,
+            overwrite=True,
+        )
+
+        # Try to append with incompatible shape
+        incompatible_images = np.random.random((1, 1, 32, 32)).astype(np.float32)
+
+        with pytest.raises(ValueError, match="Image dimensions don't match"):
+            convert(
+                output_dir=temp_dir,
+                images=incompatible_images,
+                append=True,
+            )
+
+    def test_convert_from_memory_append(self, temp_dir):
+        """Test convert with append parameter for memory conversion."""
+
+        # Create initial store
+        initial_images = np.random.randint(0, 255, (2, 1, 64, 64), dtype=np.uint8)
+
+        zarr_path = convert(
+            output_dir=temp_dir,
+            images=initial_images,
+            overwrite=True,
+        )
+
+        # Append using convert
+        append_images = np.random.randint(0, 255, (1, 1, 64, 64), dtype=np.uint8)
+
+        result_path = convert(
+            output_dir=temp_dir,
+            images=append_images,
+            append=True,
+        )
+
+        assert result_path == zarr_path
+
+        # Verify
+        store = zarr.storage.LocalStore(zarr_path)
+        root = zarr.open_group(store=store, mode="r")
+        images_array = root["images"]
+
+        assert images_array.shape == (3, 1, 64, 64)  # 2 + 1 = 3 images

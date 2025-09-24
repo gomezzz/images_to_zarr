@@ -16,6 +16,7 @@ A Python module to efficiently bulk-convert large collections of heterogeneous i
 - **Cloud-friendly**: S3-compatible storage backend
 - **Visual inspection**: Built-in plotting tools to sample and display stored images
 - **Easy inspection**: Built-in tools to analyze converted stores
+- **Append functionality**: Add new images to existing Zarr stores
 
 ## Installation
 
@@ -75,6 +76,12 @@ images_to_zarr convert /path/to/images1 /path/to/images2 \
     --resize 256,256 \
     --interpolation-order 1 \
     --overwrite
+
+# Append new images to existing store
+images_to_zarr convert /path/to/new/images \
+    --metadata new_metadata.csv \
+    --out /existing/store.zarr \
+    --append
 ```
 
 Inspect a Zarr store:
@@ -87,7 +94,6 @@ images_to_zarr inspect /path/to/store.zarr
 
 ```python
 from images_to_zarr import convert, inspect, display_sample_images
-from images_to_zarr.convert import convert_from_memory
 import numpy as np
 from pathlib import Path
 
@@ -128,9 +134,9 @@ zarr_path = convert(
 # Convert numpy arrays directly to Zarr (memory-to-zarr conversion)
 # Images must be in NCHW format: (batch, channels, height, width)
 images = np.random.rand(100, 3, 224, 224).astype(np.float32)  # 100 RGB images
-zarr_path = convert_from_memory(
-    images=images,
+zarr_path = convert(
     output_dir="/output/dir",
+    images=images,
     compressor="lz4",
     overwrite=True
 )
@@ -145,6 +151,16 @@ zarr_path = convert(
     overwrite=True
 )
 
+# Append images to existing store
+new_images = np.random.rand(50, 3, 224, 224).astype(np.float32)  # 50 more images
+new_metadata = [{"id": i, "source": "appended"} for i in range(100, 150)]
+zarr_path = convert(
+    output_dir="/output/dir",
+    images=new_images,
+    image_metadata=new_metadata,
+    append=True  # Append to existing store
+)
+
 # Inspect the result
 inspect(zarr_path)
 
@@ -154,6 +170,14 @@ display_sample_images(zarr_path, num_samples=6, figsize=(15, 10))
 
 # Save sample images to file
 display_sample_images(zarr_path, num_samples=4, save_path="samples.png")
+
+# Append more images from memory
+new_images = np.random.rand(25, 3, 224, 224).astype(np.float32)
+zarr_path = convert(
+    output_dir="/output/dir",
+    images=new_images,
+    append=True  # Append to existing store
+)
 ```
 
 ## Usage
@@ -240,6 +264,68 @@ convert(
 | `resize`               | Resize images to (height, width)                | None          |
 | `interpolation_order`  | Resize interpolation order (0-5)                | 1 (bi-linear) |
 | `overwrite`            | Overwrite existing store if present             | False         |
+| `append`               | Append to existing store                         | False         |
+
+## Append Functionality
+
+You can add new images to existing Zarr stores using the `append=True` parameter. This is useful for:
+
+- **Incremental data processing**: Add new images as they become available
+- **Distributed processing**: Combine results from multiple processing nodes
+- **Large dataset management**: Build up large datasets incrementally
+
+### Append Requirements
+
+- **Compatible dimensions**: New images must have the same shape as existing images (except batch dimension)
+- **Compatible data types**: New images are automatically converted to match existing store dtype
+- **Mutually exclusive with overwrite**: Cannot use `append=True` and `overwrite=True` together
+
+### Append Examples
+
+```python
+from images_to_zarr import convert
+
+# Create initial store
+initial_images = np.random.rand(100, 3, 256, 256).astype(np.float32)
+zarr_path = convert(
+    output_dir="./dataset.zarr",
+    images=initial_images,
+    overwrite=True
+)
+
+# Append more images
+additional_images = np.random.rand(50, 3, 256, 256).astype(np.float32)
+convert(
+    output_dir="./dataset.zarr",
+    images=additional_images,
+    append=True  # Append to existing store
+)
+
+# Result: dataset.zarr now contains 150 images (100 + 50)
+```
+
+### Append with File-based Conversion
+
+```bash
+# Create initial store
+images_to_zarr convert /initial/images --out /dataset.zarr
+
+# Append more images later
+images_to_zarr convert /new/images --out /dataset.zarr --append
+```
+
+### Append History
+
+Each append operation is tracked in the Zarr store attributes:
+
+```python
+import zarr
+
+store = zarr.storage.LocalStore("./dataset.zarr")
+root = zarr.open_group(store=store, mode="r")
+print(root.attrs["append_history"])
+# [{"appended_count": 50, "start_index": 100, "end_index": 150}]
+```
 
 ## Output Structure
 
@@ -403,15 +489,15 @@ Convert numpy arrays directly to Zarr without saving intermediate files:
 
 ```python
 import numpy as np
-from images_to_zarr.convert import convert_from_memory
+from images_to_zarr import convert
 
 # Your image data (must be 4D NCHW format)
 images = np.random.rand(1000, 3, 256, 256).astype(np.float32)
 
 # Convert directly to zarr
-zarr_path = convert_from_memory(
-    images=images,
+zarr_path = convert(
     output_dir="./data",
+    images=images,
     compressor="lz4",
     chunk_shape=(100, 256, 256),  # Chunk 100 images together
     overwrite=True
