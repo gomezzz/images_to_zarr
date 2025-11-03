@@ -459,7 +459,7 @@ flake8
 
 ## License
 
-This project is licensed under the GPLv3 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the LGPL License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
