@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "images_to_zarr"
-version = "0.3.3"
+version = "0.3.4"
 description = "Tiny Python module to bulk-convert large amounts of images into zarr files"
 readme = "README.md"
 license = { file = "LICENSE" }
