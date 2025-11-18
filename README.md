@@ -459,7 +459,11 @@ flake8
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This work is dual-licensed under either GPL-3.0 or MIT license, at your option.
+
+---
+SPDX-License-Identifier: GPL-3.0 OR MIT
+---
 
 ## Acknowledgments
 
